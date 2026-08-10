@@ -1,0 +1,22 @@
+# Python
+**/__pycache__/
+*.pyc
+
+# AKB baseline: pinned author repos, downloaded datasets, model checkpoints,
+# and generated outputs. See akb_baseline_phase1/RUNLOG.md to regenerate.
+/akb_baseline_phase1/external/
+/akb_baseline_phase1/cache/
+/akb_baseline_phase1/outputs/
+/akb_baseline_phase1/.conda/
+/akb_baseline_phase1/.venv/
+
+# pi agent CLI install: downloaded binary + native deps. See protocol.md to reinstall.
+/pi/
+
+# SciFact-Open + pi agent exploratory trial: keep scripts/notes, drop generated data.
+/pi_scifact_trial/*.jsonl
+/pi_scifact_trial/result_*.txt
+/pi_scifact_trial/diag*.txt
+
+# Scratch / temp PDF page extraction
+/tmp/
