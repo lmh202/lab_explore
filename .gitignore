@@ -1,0 +1,13 @@
+# Third-party repositories and downloaded public assets are pinned in
+# env/environment_notes.md and should not be committed into an orchestration repo.
+/external/
+
+# Generated experiment outputs.
+/outputs/
+/cache/
+
+# Local environments and caches.
+/.conda/
+/.venv/
+/**/__pycache__/
+*.pyc
