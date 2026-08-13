@@ -18,5 +18,28 @@
 /pi_scifact_trial/result_*.txt
 /pi_scifact_trial/diag*.txt
 
+# Corpus-size scaling sweep: keep the two orchestration scripts, drop the
+# generated per-claim corpora/tasks/results/logs (many are 100s of MB).
+/pi_scifact_trial/scale_sweep/corpus_*.jsonl
+/pi_scifact_trial/scale_sweep/task_*.md
+/pi_scifact_trial/scale_sweep/result_*.txt
+/pi_scifact_trial/scale_sweep/sweep_results.csv
+
+# pi compaction bug investigation: throwaway diagnostic scripts, workspaces,
+# a 462k-line `strings` dump of pi.exe, and multi-GB test corpora. The actual
+# finding is written up in conversation/RUNLOG, not here.
+/pi_scifact_trial/scale_sweep/diag_compaction/
+
+# pi upgrade (compaction one-shot-flag fix): backup of the original official
+# 0.84.1 binary, the patched build, and the full pi-mono source checkout used
+# to build it (~1GB+ with node_modules). The actual source diff is a few
+# lines in packages/coding-agent/src/core/agent-session.ts -- see RUNLOG.
+/pi_backup_0.84.1_original/
+/pi_patched/
+/pi-mono-src/
+
 # Scratch / temp PDF page extraction
 /tmp/
+
+# external repositories
+/waypoint/

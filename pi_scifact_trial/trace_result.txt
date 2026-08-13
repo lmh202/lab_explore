@@ -1,0 +1,11 @@
+Based on my analysis of the relevant documents, the claim states that **"synaptic activity enhances local synthesis of brain derived neurotrophic factor from postsynaptic dendrites."**
+
+The most directly relevant document is **doc_id 4456756** ("Autocrine BDNF-TrkB signalling within a single dendritic spine"), which describes how synaptic stimulation (sLTP induction) leads to TrkB activation that depends on **postsynaptically synthesized BDNF** in dendritic spines. This directly SUPPORTS the claim.
+
+However, I should also consider doc_id 21551484, which says synaptic activity drives BDNF expression **in the cell soma** (not locally in dendrites). This would CONTRADICT the claim.
+
+Since doc 4456756 explicitly demonstrates postsynaptically synthesized BDNF in dendritic spines dependent on NMDAR/CaMKII signaling during synaptic stimulation, this is the more direct evidence supporting local BDNF synthesis at postsynaptic dendrites.
+
+```json
+{"label": "SUPPORT", "doc_id": 4456756, "evidence": "In response to sLTP induction, we find fast (onset < 1 min) and sustained (>20 min) activation of TrkB in the stimulated spine that depends on NMDAR (N-methyl-d-aspartate receptor) and CaMKII signalling and on postsynaptically synthesized BDNF."}
+```

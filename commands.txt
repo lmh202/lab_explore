@@ -1,0 +1,1 @@
+cd waypoint/backend && uv run waypoint serve
