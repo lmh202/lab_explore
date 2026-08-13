@@ -1,0 +1,452 @@
+"use client";
+
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+
+import {
+  fetchWorkspaceTree,
+  type WorkspaceGitFileStatus,
+  type WorkspaceTreeEntry,
+  type WorkspaceTreePage,
+} from "@/lib/api";
+import { FileIcon, FolderIcon } from "@/components/AttachmentTray";
+
+type GitDecorationKind =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "untracked";
+
+function gitDecoration(
+  status: WorkspaceGitFileStatus | undefined,
+): { letter: string; kind: GitDecorationKind } | null {
+  if (!status) return null;
+  if (status.untracked) return { letter: "U", kind: "untracked" };
+  // Prefer the staged (index) column, falling back to the worktree column.
+  const code = status.indexStatus !== " " ? status.indexStatus : status.worktreeStatus;
+  switch (code) {
+    case "A":
+      return { letter: "A", kind: "added" };
+    case "D":
+      return { letter: "D", kind: "deleted" };
+    case "R":
+      return { letter: "R", kind: "renamed" };
+    case "C":
+      return { letter: "C", kind: "added" };
+    default:
+      return { letter: "M", kind: "modified" };
+  }
+}
+
+interface DirState {
+  entries: WorkspaceTreeEntry[];
+  overflow: number | null;
+  loading: boolean;
+  error: string | null;
+}
+
+function sortEntries(entries: WorkspaceTreeEntry[]): WorkspaceTreeEntry[] {
+  return [...entries].sort((a, b) => {
+    if (a.kind === "dir" && b.kind !== "dir") return -1;
+    if (a.kind !== "dir" && b.kind === "dir") return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+interface WorkspaceTreeProps {
+  host: string;
+  token: string;
+  sessionId: string;
+  selectedPath: string | null;
+  revealPath?: string | null;
+  revealSeq?: number;
+  refreshSeq?: number;
+  gitStatus?: Map<string, WorkspaceGitFileStatus>;
+  dirtyDirs?: Set<string>;
+  onSelectFile: (path: string) => void;
+  onRootLoaded?: (root: WorkspaceTreePage["root"]) => void;
+}
+
+export function WorkspaceTree({
+  host,
+  token,
+  sessionId,
+  selectedPath,
+  revealPath,
+  revealSeq,
+  refreshSeq,
+  gitStatus,
+  dirtyDirs,
+  onSelectFile,
+  onRootLoaded,
+}: WorkspaceTreeProps) {
+  const [dirCache, setDirCache] = useState<Map<string, DirState>>(new Map());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set([""]));
+  // The directory currently highlighted by a reveal. Cleared on the next user
+  // interaction so the highlight doesn't outlive its purpose.
+  const [activeReveal, setActiveReveal] = useState<string | null>(null);
+  const onRootLoadedRef = useRef(onRootLoaded);
+  onRootLoadedRef.current = onRootLoaded;
+
+  const selectFile = useCallback(
+    (path: string) => {
+      setActiveReveal(null);
+      onSelectFile(path);
+    },
+    [onSelectFile],
+  );
+
+  const fetchDir = useCallback(
+    async (dirPath: string, limit?: number) => {
+      setDirCache((prev) => {
+        const next = new Map(prev);
+        // Preserve any already-loaded entries while reloading so a refresh
+        // updates in place instead of blanking the tree to "Loading…".
+        const existing = prev.get(dirPath);
+        next.set(dirPath, {
+          entries: existing?.entries ?? [],
+          overflow: existing?.overflow ?? null,
+          loading: true,
+          error: null,
+        });
+        return next;
+      });
+      try {
+        const page = await fetchWorkspaceTree(host, token, sessionId, dirPath, { limit });
+        if (dirPath === "") {
+          onRootLoadedRef.current?.(page.root);
+        }
+        setDirCache((prev) => {
+          const next = new Map(prev);
+          next.set(dirPath, {
+            entries: sortEntries(page.entries),
+            overflow: page.overflow,
+            loading: false,
+            error: null,
+          });
+          return next;
+        });
+      } catch (e) {
+        setDirCache((prev) => {
+          const next = new Map(prev);
+          next.set(dirPath, {
+            entries: [],
+            overflow: null,
+            loading: false,
+            error: e instanceof Error ? e.message : "Failed to load",
+          });
+          return next;
+        });
+      }
+    },
+    [host, token, sessionId],
+  );
+
+  // Append the next page of a capped directory. Pages are deduped by name (so a
+  // refresh landing mid-request can't leave duplicates) and re-sorted for
+  // display.
+  const loadMore = useCallback(
+    async (dirPath: string, offset: number) => {
+      let skip = false;
+      setDirCache((prev) => {
+        const existing = prev.get(dirPath);
+        if (existing?.loading) {
+          skip = true;
+          return prev;
+        }
+        const next = new Map(prev);
+        if (existing) next.set(dirPath, { ...existing, loading: true, error: null });
+        return next;
+      });
+      if (skip) return;
+      try {
+        const page = await fetchWorkspaceTree(host, token, sessionId, dirPath, { offset });
+        setDirCache((prev) => {
+          const next = new Map(prev);
+          const existing = prev.get(dirPath);
+          const byName = new Map<string, WorkspaceTreeEntry>();
+          for (const entry of [...(existing?.entries ?? []), ...page.entries]) {
+            if (!byName.has(entry.name)) byName.set(entry.name, entry);
+          }
+          next.set(dirPath, {
+            entries: sortEntries([...byName.values()]),
+            overflow: page.overflow,
+            loading: false,
+            error: null,
+          });
+          return next;
+        });
+      } catch (e) {
+        setDirCache((prev) => {
+          const next = new Map(prev);
+          const existing = prev.get(dirPath);
+          if (existing) {
+            next.set(dirPath, {
+              ...existing,
+              loading: false,
+              error: e instanceof Error ? e.message : "Failed to load",
+            });
+          }
+          return next;
+        });
+      }
+    },
+    [host, token, sessionId],
+  );
+
+  useEffect(() => {
+    setDirCache(new Map());
+    setExpanded(new Set([""]));
+    void fetchDir("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [host, token, sessionId]);
+
+  // Reveal a directory: expand its full ancestor chain (lazy-fetching any dir
+  // not yet cached) so the target node renders, then it scrolls itself into
+  // view (see TreeNode).
+  useEffect(() => {
+    if (revealPath == null || revealPath === "") {
+      setActiveReveal(null);
+      return;
+    }
+    const parts = revealPath.split("/").filter(Boolean);
+    // Ancestor dirs to expand, plus the target itself. The root ("") is always
+    // fetched by the session-reset effect, so it's excluded from the chain.
+    const chain: string[] = [];
+    let acc = "";
+    for (const part of parts) {
+      acc = acc ? `${acc}/${part}` : part;
+      chain.push(acc);
+    }
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (const dir of chain) next.add(dir);
+      return next;
+    });
+    for (const dir of chain) {
+      if (!dirCache.has(dir)) void fetchDir(dir);
+    }
+    setActiveReveal(revealPath);
+    // revealSeq lets an unchanged revealPath re-trigger a reveal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealPath, revealSeq]);
+
+  // Refresh: re-fetch every currently-expanded directory (root included),
+  // preserving the expansion set and selection. Skipped on first mount
+  // (refreshSeq starts undefined/0) so it only fires on an explicit bump.
+  useEffect(() => {
+    if (!refreshSeq) return;
+    // Re-fetch enough rows to cover any pages the user loaded via "Load more"
+    // so a refresh doesn't snap an expanded directory back to its first page.
+    for (const dir of expanded) {
+      const loaded = dirCache.get(dir)?.entries.length ?? 0;
+      // Clamped to the endpoint's max limit; a directory paged past the cap
+      // re-collapses to it on refresh rather than 422-ing.
+      void fetchDir(dir, loaded > 0 ? Math.min(2000, Math.max(500, loaded)) : undefined);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSeq]);
+
+  const toggleDir = useCallback(
+    (dirPath: string) => {
+      setActiveReveal(null);
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(dirPath)) {
+          next.delete(dirPath);
+        } else {
+          next.add(dirPath);
+          if (!dirCache.has(dirPath)) {
+            void fetchDir(dirPath);
+          }
+        }
+        return next;
+      });
+    },
+    [dirCache, fetchDir],
+  );
+
+  const rootState = dirCache.get("");
+  if (!rootState || (rootState.loading && rootState.entries.length === 0)) {
+    return <div className="wp-tree-loading">Loading…</div>;
+  }
+  if (rootState.error) {
+    return <div className="wp-tree-error">{rootState.error}</div>;
+  }
+
+  return (
+    <ul className="wp-tree-root" role="tree">
+      {rootState.entries.map((entry) => (
+        <TreeNode
+          key={entry.name}
+          entry={entry}
+          parentPath=""
+          depth={0}
+          dirCache={dirCache}
+          expanded={expanded}
+          selectedPath={selectedPath}
+          revealTarget={activeReveal}
+          revealSeq={revealSeq}
+          gitStatus={gitStatus}
+          dirtyDirs={dirtyDirs}
+          onSelectFile={selectFile}
+          onToggleDir={toggleDir}
+          onLoadMore={loadMore}
+        />
+      ))}
+      {rootState.overflow ? (
+        <li className="wp-tree-overflow">
+          <button
+            type="button"
+            className="wp-tree-loadmore"
+            disabled={rootState.loading}
+            onClick={() => loadMore("", rootState.entries.length)}
+          >
+            Show {rootState.overflow} more
+          </button>
+        </li>
+      ) : null}
+    </ul>
+  );
+}
+
+function TreeNode({
+  entry,
+  parentPath,
+  depth,
+  dirCache,
+  expanded,
+  selectedPath,
+  revealTarget,
+  revealSeq,
+  gitStatus,
+  dirtyDirs,
+  onSelectFile,
+  onToggleDir,
+  onLoadMore,
+}: {
+  entry: WorkspaceTreeEntry;
+  parentPath: string;
+  depth: number;
+  dirCache: Map<string, DirState>;
+  expanded: Set<string>;
+  selectedPath: string | null;
+  revealTarget: string | null;
+  revealSeq?: number;
+  gitStatus?: Map<string, WorkspaceGitFileStatus>;
+  dirtyDirs?: Set<string>;
+  onSelectFile: (path: string) => void;
+  onToggleDir: (dirPath: string) => void;
+  onLoadMore: (dirPath: string, offset: number) => void;
+}) {
+  const fullPath = parentPath ? `${parentPath}/${entry.name}` : entry.name;
+  const isDir = entry.kind === "dir";
+  const isExpanded = expanded.has(fullPath);
+  const dirState = isDir ? dirCache.get(fullPath) : undefined;
+  const isSelected = !isDir && selectedPath === fullPath;
+  const isRevealed = revealTarget != null && revealTarget === fullPath;
+  const nodeRef = useRef<HTMLButtonElement>(null);
+  const decoration = isDir ? null : gitDecoration(gitStatus?.get(fullPath));
+  const isDirtyDir = isDir && (dirtyDirs?.has(fullPath) ?? false);
+
+  // revealSeq is in the deps so a repeat reveal of the same (already-revealed)
+  // node re-scrolls it into view even though `isRevealed` stays true.
+  useEffect(() => {
+    if (isRevealed) {
+      nodeRef.current?.scrollIntoView({ block: "center" });
+    }
+  }, [isRevealed, revealSeq]);
+
+  return (
+    <li
+      role="treeitem"
+      aria-expanded={isDir ? isExpanded : undefined}
+      aria-selected={isSelected}
+      style={{ "--depth": depth } as CSSProperties}
+    >
+      <button
+        ref={nodeRef}
+        type="button"
+        className={`wp-tree-node${isSelected || isRevealed ? " selected" : ""}${isDir ? " is-dir" : ""}${decoration ? ` git-${decoration.kind}` : ""}${isDirtyDir ? " git-dirty" : ""}`}
+        onClick={() => {
+          if (isDir) {
+            onToggleDir(fullPath);
+          } else {
+            onSelectFile(fullPath);
+          }
+        }}
+      >
+        <span className="wp-tree-indent" style={{ width: `${depth * 16}px` }} />
+        <span className="wp-tree-toggle" aria-hidden="true">
+          {isDir ? (isExpanded ? "▾" : "▸") : ""}
+        </span>
+        <span className="wp-tree-icon" aria-hidden="true">
+          {isDir ? <FolderIcon /> : <FileIcon />}
+        </span>
+        <span className="wp-tree-name">{entry.name}</span>
+        {decoration ? (
+          <span className={`wp-git-badge ${decoration.kind}`} aria-hidden="true">
+            {decoration.letter}
+          </span>
+        ) : isDirtyDir ? (
+          <span className="wp-git-dot" aria-hidden="true" />
+        ) : null}
+      </button>
+      {isDir && isExpanded ? (
+        <ul role="group">
+          {dirState && dirState.entries.length > 0 ? (
+            <>
+              {dirState.entries.map((child) => (
+                <TreeNode
+                  key={child.name}
+                  entry={child}
+                  parentPath={fullPath}
+                  depth={depth + 1}
+                  dirCache={dirCache}
+                  expanded={expanded}
+                  selectedPath={selectedPath}
+                  revealTarget={revealTarget}
+                  revealSeq={revealSeq}
+                  gitStatus={gitStatus}
+                  dirtyDirs={dirtyDirs}
+                  onSelectFile={onSelectFile}
+                  onToggleDir={onToggleDir}
+                  onLoadMore={onLoadMore}
+                />
+              ))}
+              {dirState.overflow ? (
+                <li
+                  className="wp-tree-overflow"
+                  style={{ "--depth": depth + 1 } as CSSProperties}
+                >
+                  <button
+                    type="button"
+                    className="wp-tree-loadmore"
+                    disabled={dirState.loading}
+                    onClick={() => onLoadMore(fullPath, dirState.entries.length)}
+                  >
+                    Show {dirState.overflow} more
+                  </button>
+                </li>
+              ) : null}
+            </>
+          ) : dirState?.loading ? (
+            <li
+              className="wp-tree-loading-child"
+              style={{ "--depth": depth + 1 } as CSSProperties}
+            >
+              Loading…
+            </li>
+          ) : dirState?.error ? (
+            <li
+              className="wp-tree-error-child"
+              style={{ "--depth": depth + 1 } as CSSProperties}
+            >
+              {dirState.error}
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </li>
+  );
+}

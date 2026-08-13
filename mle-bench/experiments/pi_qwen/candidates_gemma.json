@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "pi": {
+    "expected_version": "0.84.1",
+    "provider": "lum-llm",
+    "model": "nvidia/Gemma-4-26B-A4B-NVFP4"
+  },
+  "smoke": {
+    "competition_id": "spaceship-titanic",
+    "time_limit_minutes": 10
+  },
+  "candidates": [
+    {
+      "competition_id": "tabular-playground-series-may-2022",
+      "modality": "tabular",
+      "dataset_size_gb": 0.57
+    },
+    {
+      "competition_id": "ventilator-pressure-prediction",
+      "modality": "tabular",
+      "dataset_size_gb": 0.7
+    },
+    {
+      "competition_id": "chaii-hindi-and-tamil-question-answering",
+      "modality": "text",
+      "dataset_size_gb": 0.032
+    },
+    {
+      "competition_id": "text-normalization-challenge-english-language",
+      "modality": "text",
+      "dataset_size_gb": 0.01
+    },
+    {
+      "competition_id": "statoil-iceberg-classifier-challenge",
+      "modality": "vision",
+      "dataset_size_gb": 0.3021
+    },
+    {
+      "competition_id": "tgs-salt-identification-challenge",
+      "modality": "vision",
+      "dataset_size_gb": 0.5
+    },
+    {
+      "competition_id": "lmsys-chatbot-arena",
+      "modality": "text",
+      "dataset_size_gb": 0.06,
+      "note": "Added in the 6->20 expansion. Large model-choice/prompt-strategy search space -- picked to probe whether the agent gets stuck re-trying near-identical approaches without memory of what it already tried."
+    },
+    {
+      "competition_id": "tensorflow2-question-answering",
+      "modality": "text",
+      "dataset_size_gb": 4,
+      "note": "Approximate, not yet verified on this host -- long-document QA, large solution-approach search space."
+    },
+    {
+      "competition_id": "champs-scalar-coupling",
+      "modality": "tabular",
+      "dataset_size_gb": 0.7,
+      "note": "Molecular property regression from atomic structure -- classic feature-engineering-iteration competition."
+    },
+    {
+      "competition_id": "uw-madison-gi-tract-image-segmentation",
+      "modality": "vision",
+      "dataset_size_gb": 2,
+      "note": "Approximate. Medical image segmentation, second data point alongside tgs-salt/statoil-iceberg to check whether the never-tried-a-CNN pattern recurs."
+    },
+    {
+      "competition_id": "hubmap-kidney-segmentation",
+      "modality": "vision",
+      "dataset_size_gb": 7,
+      "note": "Approximate, high-res whole-slide images -- deliberately larger than tgs-salt's 101x101 crops to stress resource management on big images. Watch disk usage: this modality family duplicates raw->prepared, see h-and-m lesson in protocol.md."
+    },
+    {
+      "competition_id": "siim-covid19-detection",
+      "modality": "vision",
+      "dataset_size_gb": 10,
+      "note": "Approximate. DICOM medical images, detection + classification two-stage pipeline."
+    },
+    {
+      "competition_id": "tweet-sentiment-extraction",
+      "modality": "text",
+      "dataset_size_gb": 0.01,
+      "note": "Same extractive-span structure as chaii but English -- checks whether chaii's TF-IDF-instead-of-finetuning shortcut recurs on an easier-resourced language."
+    },
+    {
+      "competition_id": "google-quest-challenge",
+      "modality": "text",
+      "dataset_size_gb": 0.01,
+      "note": "30-target Spearman-correlation regression on text -- new metric_alignment trap not covered by the original 6."
+    },
+    {
+      "competition_id": "jigsaw-unintended-bias-in-toxicity-classification",
+      "modality": "text",
+      "dataset_size_gb": 0.8,
+      "note": "Approximate. Custom subgroup-AUC fairness metric -- another new metric_alignment trap."
+    },
+    {
+      "competition_id": "AI4Code",
+      "modality": "structured",
+      "dataset_size_gb": 6,
+      "note": "Approximate. Predicting correct order of notebook code cells -- ranking/structured-prediction task, unlike anything in the original 6."
+    },
+    {
+      "competition_id": "learning-agency-lab-automated-essay-scoring-2",
+      "modality": "text",
+      "dataset_size_gb": 0.03,
+      "note": "2024 LLM-era essay scoring -- checks whether the agent substitutes an LLM-as-judge shortcut for real training."
+    },
+    {
+      "competition_id": "freesound-audio-tagging-2019",
+      "modality": "audio",
+      "dataset_size_gb": 25,
+      "note": "Approximate, not yet verified on this host -- zero audio coverage in the original 6. Watch disk usage before running unattended."
+    },
+    {
+      "competition_id": "stanford-covid-vaccine",
+      "modality": "bio-sequence",
+      "dataset_size_gb": 0.05,
+      "note": "RNA structure prediction, deliberately picked as a 'no obvious baseline' hard case (high complexity tier)."
+    }
+  ],
+  "dropped_candidates": [
+    {
+      "competition_id": "h-and-m-personalized-fashion-recommendations",
+      "reason": "raw dataset alone is ~32GB and mlebench's prepare step additionally copies images from raw/ into prepared/public/ (near-2x footprint) -- exhausted 90GB of free disk mid-run on 2026-08-13 and starved every competition queued after it. Not attempted again; replace only if a smaller image-heavy recommender alternative is found."
+    }
+  ],
+  "failure_categories": {
+    "data_contract": {
+      "description": "Misread columns, targets, task contract, or leakage boundaries.",
+      "policy_clause": "Before modeling, write down the target, feature groups, train/test differences, leakage risks, and exact submission columns."
+    },
+    "validation_design": {
+      "description": "Validation split does not match groups, time, classes, or test distribution.",
+      "policy_clause": "Choose and justify a validation split that matches the task's groups, ordering, class balance, and deployment distribution before comparing models."
+    },
+    "metric_alignment": {
+      "description": "Training objective, validation metric, or post-processing is misaligned with grading.",
+      "policy_clause": "Evaluate every experiment with the official metric and verify that loss, probability calibration, thresholds, and post-processing are aligned with it."
+    },
+    "baseline_execution": {
+      "description": "No early end-to-end baseline or baseline is not reproducible.",
+      "policy_clause": "Produce and validate a complete simple baseline early, including a valid submission, before attempting expensive improvements."
+    },
+    "experiment_control": {
+      "description": "Experiments change multiple factors or are not recorded and compared fairly.",
+      "policy_clause": "Maintain an experiment ledger and change one major factor at a time, recording validation score, runtime, and the decision that follows."
+    },
+    "error_analysis": {
+      "description": "Further experiments are chosen without inspecting validation errors.",
+      "policy_clause": "Use validation errors and meaningful slices to select the next experiment; do not switch model families without evidence."
+    },
+    "resource_management": {
+      "description": "Time, memory, or GPU budget is spent without protecting a final runnable path.",
+      "policy_clause": "Budget time explicitly for inspection, baseline, improvements, and final inference, and reduce scope before risking the final submission path."
+    },
+    "checkpoint_selection": {
+      "description": "The last model is used instead of the best honestly validated model.",
+      "policy_clause": "Persist the best validation checkpoint and configuration after every experiment; final inference must use the best verified artifact, not the latest one."
+    },
+    "submission_validation": {
+      "description": "Submission rows, order, columns, ranges, or files are not checked.",
+      "policy_clause": "Reserve time to regenerate the submission from the best artifact and validate its header, IDs, row count, missing values, and prediction ranges."
+    },
+    "reproducibility": {
+      "description": "Seeds, dependencies, commands, or selected artifacts are not recorded.",
+      "policy_clause": "Fix seeds and record commands, dependency versions, data splits, and selected artifacts so the final result can be rerun."
+    }
+  }
+}

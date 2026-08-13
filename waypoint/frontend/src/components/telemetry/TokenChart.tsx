@@ -1,0 +1,556 @@
+"use client";
+
+import { useId, useMemo, useState } from "react";
+
+import { ChartTooltip, ChartTooltipState } from "@/components/telemetry/ChartTooltip";
+import {
+  TOKEN_DISPLAY_ORDER,
+  TOKEN_GROUP_BY_OPTIONS,
+  TOKEN_TIER_NEW_WORK,
+  TOKEN_TIER_REREAD,
+  coverageLabel,
+  formatCompactNumber,
+  splitTokenTiers,
+  tokenCategoryColor,
+  tokenCategoryLabel,
+} from "@/lib/telemetry";
+import { TelemetryTokens, TokenGroupBy } from "@/lib/types";
+
+interface TokenChartProps {
+  tokens: TelemetryTokens | null;
+  loading: boolean;
+  groupBy: TokenGroupBy;
+  onGroupByChange: (groupBy: TokenGroupBy) => void;
+}
+
+const CHART_W = 640;
+const CHART_H = 220;
+const PAD_LEFT = 40;
+const PAD_RIGHT = 40;
+const PAD_TOP = 12;
+const PAD_BOTTOM = 26;
+const SEGMENT_GAP = 2;
+const BAR_GAP_RATIO = 0.28;
+const MAX_RANKED_GROUPS = 7;
+
+function seriesColor(index: number): string {
+  return `var(--tm-series-${(index % 8) + 1})`;
+}
+
+// SVG <text> has no ellipsis/clip of its own, so a long ranked-group label would
+// spill past the chart's left margin. Trim to a character budget with an
+// ellipsis; the full label stays reachable via the row's <title> tooltip.
+function truncateLabel(label: string, max: number): string {
+  if (label.length <= max) return label;
+  return `${label.slice(0, max - 1).trimEnd()}…`;
+}
+
+function niceMax(value: number): number {
+  if (value <= 0) return 1;
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const residual = value / magnitude;
+  const niceResidual = residual <= 1 ? 1 : residual <= 2 ? 2 : residual <= 5 ? 5 : 10;
+  return niceResidual * magnitude;
+}
+
+function roundedTopRectPath(x: number, y: number, w: number, h: number, r: number): string {
+  const radius = Math.max(0, Math.min(r, w / 2, h));
+  if (radius <= 0) {
+    return `M ${x} ${y} h ${w} v ${h} h ${-w} Z`;
+  }
+  return [
+    `M ${x} ${y + radius}`,
+    `a ${radius} ${radius} 0 0 1 ${radius} ${-radius}`,
+    `h ${w - 2 * radius}`,
+    `a ${radius} ${radius} 0 0 1 ${radius} ${radius}`,
+    `v ${h - radius}`,
+    `h ${-w}`,
+    `Z`,
+  ].join(" ");
+}
+
+// Horizontal bar rounded only at its free (right) end; square at the axis.
+function roundedRightRectPath(x: number, y: number, w: number, h: number, r: number): string {
+  const radius = Math.max(0, Math.min(r, w, h / 2));
+  if (radius <= 0 || w <= 0) {
+    return `M ${x} ${y} h ${Math.max(w, 0)} v ${h} h ${-Math.max(w, 0)} Z`;
+  }
+  return [
+    `M ${x} ${y}`,
+    `h ${w - radius}`,
+    `a ${radius} ${radius} 0 0 1 ${radius} ${radius}`,
+    `v ${h - 2 * radius}`,
+    `a ${radius} ${radius} 0 0 1 ${-radius} ${radius}`,
+    `h ${-(w - radius)}`,
+    `Z`,
+  ].join(" ");
+}
+
+export function TokenChart({ tokens, loading, groupBy, onGroupByChange }: TokenChartProps) {
+  const [tooltip, setTooltip] = useState<ChartTooltipState | null>(null);
+  const [tableOpen, setTableOpen] = useState(false);
+  const titleId = useId();
+
+  const timeSeries = groupBy === "time" ? tokens?.series ?? [] : [];
+
+  const categories = useMemo(() => {
+    const points = groupBy === "time" ? tokens?.series ?? [] : [];
+    const present = new Set<string>();
+    for (const point of points) {
+      for (const [key, value] of Object.entries(point.totals)) {
+        if (value > 0) present.add(key);
+      }
+    }
+    // Fixed two-tier stacking order (new work first, muted re-read band last),
+    // then any unrecognized key trailing so nothing silently drops.
+    const known = TOKEN_DISPLAY_ORDER.filter((key) => present.has(key));
+    const rest = [...present].filter((key) => !TOKEN_DISPLAY_ORDER.includes(key as never)).sort();
+    return [...known, ...rest];
+  }, [groupBy, tokens]);
+
+  const rankedGroups = useMemo(() => {
+    const rawGroups = groupBy !== "time" ? tokens?.groups ?? [] : [];
+    // Bars represent new-work only (cached re-reads would dwarf the axis), so
+    // derive the value from the raw buckets rather than `display_total` — the
+    // four new-work buckets never overlap, so the sum is always safe and it
+    // stays correct whether or not the backend has excluded cache reads yet.
+    const withValues = rawGroups.map((group) => ({
+      group,
+      value: splitTokenTiers(group.totals).newWork,
+    }));
+    withValues.sort((a, b) => b.value - a.value);
+    if (withValues.length <= MAX_RANKED_GROUPS + 1) return withValues;
+    const head = withValues.slice(0, MAX_RANKED_GROUPS);
+    const tail = withValues.slice(MAX_RANKED_GROUPS);
+    const otherValue = tail.reduce((sum, item) => sum + item.value, 0);
+    return [
+      ...head,
+      {
+        group: {
+          key: "__other__",
+          label: `Other (${tail.length})`,
+          totals: {},
+          display_total: otherValue,
+          cached_read_tokens: tail.reduce(
+            (sum, item) => sum + (item.group.cached_read_tokens ?? 0),
+            0,
+          ),
+          coverage: "partial" as const,
+        },
+        value: otherValue,
+      },
+    ];
+  }, [groupBy, tokens]);
+
+  if (loading && !tokens) {
+    return <div className="panel tm-chart-card is-loading" aria-busy="true" />;
+  }
+  if (!tokens) return null;
+
+  // `categories` already keeps only keys with a positive amount, so an all-zero
+  // range (unify_tokens always emits all 5 keys, 0 where absent) yields an empty
+  // list and falls through to the empty state instead of a blank SVG.
+  const hasData = groupBy === "time" ? categories.length > 0 : rankedGroups.length > 0;
+
+  const plotW = CHART_W - PAD_LEFT - PAD_RIGHT;
+  const plotH = CHART_H - PAD_TOP - PAD_BOTTOM;
+
+  return (
+    <section id="tm-tokens-anchor" className="panel tm-chart-card" aria-labelledby={titleId}>
+      <header className="tm-chart-head">
+        <h3 id={titleId}>Token usage</h3>
+        <label className="tm-chart-select-label">
+          Group by
+          <select
+            className="tm-chart-select"
+            value={groupBy}
+            onChange={(event) => onGroupByChange(event.target.value as TokenGroupBy)}
+          >
+            {TOKEN_GROUP_BY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </header>
+
+      {!hasData ? (
+        <p className="muted tm-chart-empty">No token activity in this range.</p>
+      ) : groupBy === "time" ? (
+        <TimeSeriesBars
+          series={timeSeries}
+          categories={categories}
+          plotW={plotW}
+          plotH={plotH}
+          onHover={setTooltip}
+        />
+      ) : (
+        <RankedBars items={rankedGroups} plotW={plotW} plotH={plotH} onHover={setTooltip} />
+      )}
+      <ChartTooltip state={tooltip} />
+
+      {hasData && groupBy === "time" ? (
+        <div className="tm-chart-legend tm-token-legend" role="list" aria-label="Token categories">
+          {(
+            [
+              ["New work", TOKEN_TIER_NEW_WORK],
+              ["Re-read context", TOKEN_TIER_REREAD],
+            ] as const
+          ).map(([tierName, tierCats]) => {
+            const present = tierCats.filter((c) => categories.includes(c));
+            if (present.length === 0) return null;
+            return (
+              <div key={tierName} className="tm-legend-tier">
+                <span className="tm-legend-tier-name">{tierName}</span>
+                {present.map((category) => (
+                  <span key={category} className="tm-legend-item" role="listitem">
+                    <span
+                      className="tm-legend-swatch"
+                      aria-hidden="true"
+                      style={{ background: tokenCategoryColor(category) }}
+                    />
+                    {tokenCategoryLabel(category)}
+                  </span>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      ) : hasData ? (
+        <div className="tm-chart-legend" role="list" aria-label="Series">
+          {rankedGroups.map(({ group }, index) => (
+            <span key={group.key} className="tm-legend-item" role="listitem">
+              <span
+                className="tm-legend-swatch"
+                aria-hidden="true"
+                style={{ background: seriesColor(index) }}
+              />
+              {group.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      <button
+        type="button"
+        className="tm-table-toggle"
+        onClick={() => setTableOpen((v) => !v)}
+        aria-expanded={tableOpen}
+      >
+        {tableOpen ? "Hide data table" : "View as table"}
+      </button>
+      {tableOpen ? (
+        groupBy === "time" ? (
+          <div className="tm-table-wrap">
+            <table className="tm-data-table">
+              <caption className="sr-only">Token usage over time by category</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Bucket</th>
+                  {categories.map((category) => (
+                    <th scope="col" key={category}>
+                      {tokenCategoryLabel(category)}
+                    </th>
+                  ))}
+                  <th scope="col">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {timeSeries.map((point) => (
+                  <tr key={point.bucket_start}>
+                    <th scope="row">{new Date(point.bucket_start).toLocaleString()}</th>
+                    {categories.map((category) => (
+                      <td key={category}>{formatCompactNumber(point.totals[category] ?? 0)}</td>
+                    ))}
+                    <td>
+                      {point.display_total !== null ? formatCompactNumber(point.display_total) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="tm-table-wrap">
+            <table className="tm-data-table">
+              <caption className="sr-only">Token usage grouped by {groupBy}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Group</th>
+                  <th scope="col">Tokens</th>
+                  <th scope="col">Coverage</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rankedGroups.map(({ group, value }) => (
+                  <tr key={group.key}>
+                    <th scope="row">{group.label}</th>
+                    <td>{formatCompactNumber(value)}</td>
+                    <td>{coverageLabel(group.coverage)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : null}
+    </section>
+  );
+}
+
+// New-work buckets are the primary stacked bars, scaled to their own max so
+// they stay legible; cached re-reads (which numerically dwarf new work) ride a
+// faint secondary-axis line instead of flattening everything into one stack.
+function TimeSeriesBars({
+  series,
+  categories,
+  plotW,
+  plotH,
+  onHover,
+}: {
+  series: TelemetryTokens["series"];
+  categories: string[];
+  plotW: number;
+  plotH: number;
+  onHover: (state: ChartTooltipState | null) => void;
+}) {
+  const rereadSet = new Set<string>(TOKEN_TIER_REREAD);
+  const stackCats = categories.filter((c) => !rereadSet.has(c));
+  const rereadCats = categories.filter((c) => rereadSet.has(c));
+
+  const primaryTotals = series.map((point) =>
+    stackCats.reduce((sum, category) => sum + (point.totals[category] ?? 0), 0),
+  );
+  const rereadTotals = series.map((point) =>
+    rereadCats.reduce((sum, category) => sum + (point.totals[category] ?? 0), 0),
+  );
+  const max = niceMax(Math.max(...primaryTotals, 0));
+  const rereadMax = niceMax(Math.max(...rereadTotals, 0));
+  const hasReread = Math.max(...rereadTotals, 0) > 0;
+
+  const barSlot = plotW / Math.max(series.length, 1);
+  const barW = barSlot * (1 - BAR_GAP_RATIO);
+
+  const rereadCoords = series.map((_, i) => ({
+    x: i * barSlot + barSlot / 2,
+    y: plotH - (rereadMax > 0 ? (rereadTotals[i] / rereadMax) * (plotH - 2) : 0),
+  }));
+  const rereadLine = rereadCoords.map((c) => `${c.x},${c.y}`).join(" ");
+
+  const tooltipRows = (point: TelemetryTokens["series"][number]) =>
+    categories
+      .filter((c) => (point.totals[c] ?? 0) > 0)
+      .map((c) => ({
+        key: c,
+        label: tokenCategoryLabel(c),
+        value: formatCompactNumber(point.totals[c] ?? 0),
+        color: tokenCategoryColor(c),
+      }));
+
+  return (
+    <svg
+      viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+      className="tm-chart-svg"
+      role="img"
+      aria-label={
+        `New-work token usage across ${series.length} time buckets, up to ${formatCompactNumber(max)} tokens` +
+        (hasReread
+          ? `; cached re-reads shown as a secondary line up to ${formatCompactNumber(rereadMax)}`
+          : "")
+      }
+    >
+      <g transform={`translate(${PAD_LEFT},${PAD_TOP})`}>
+        {[0, 0.5, 1].map((fraction) => {
+          const y = plotH - plotH * fraction;
+          return (
+            <g key={fraction}>
+              <line x1={0} y1={y} x2={plotW} y2={y} className="tm-chart-gridline" />
+              <text x={-8} y={y} className="tm-chart-axis-label" textAnchor="end" dy="0.32em">
+                {formatCompactNumber(max * fraction)}
+              </text>
+              {hasReread ? (
+                <text
+                  x={plotW + 6}
+                  y={y}
+                  className="tm-chart-axis-label tm-chart-axis-label-reread"
+                  textAnchor="start"
+                  dy="0.32em"
+                >
+                  {formatCompactNumber(rereadMax * fraction)}
+                </text>
+              ) : null}
+            </g>
+          );
+        })}
+        {series.map((point, i) => {
+          const x = i * barSlot + (barSlot - barW) / 2;
+          const usableH = plotH - Math.max(stackCats.length - 1, 0) * SEGMENT_GAP;
+          let cursorY = plotH;
+          const segments = stackCats
+            .map((category) => {
+              const value = point.totals[category] ?? 0;
+              const h = max > 0 ? (value / max) * usableH : 0;
+              cursorY -= h;
+              const segY = cursorY;
+              cursorY -= SEGMENT_GAP;
+              return { category, value, y: segY, h };
+            })
+            .filter((segment) => segment.h > 0);
+          const topIndex = segments.length - 1;
+          const reread = rereadTotals[i];
+          const title = new Date(point.bucket_start).toLocaleString();
+          const label =
+            `${title}: ${formatCompactNumber(primaryTotals[i])} new-work tokens` +
+            (reread > 0 ? `, ${formatCompactNumber(reread)} cached re-reads` : "");
+          return (
+            <g
+              key={point.bucket_start}
+              tabIndex={0}
+              role="img"
+              aria-label={label}
+              className="tm-bar-group"
+              onMouseEnter={(event) =>
+                onHover({ left: event.clientX, top: event.clientY, title, rows: tooltipRows(point) })
+              }
+              onMouseMove={(event) =>
+                onHover({ left: event.clientX, top: event.clientY, title, rows: tooltipRows(point) })
+              }
+              onFocus={() => onHover({ left: 0, top: 0, title, rows: tooltipRows(point) })}
+              onMouseLeave={() => onHover(null)}
+              onBlur={() => onHover(null)}
+            >
+              {segments.map((segment, idx) =>
+                idx === topIndex ? (
+                  <path
+                    key={segment.category}
+                    d={roundedTopRectPath(x, segment.y, barW, segment.h, 3)}
+                    fill={tokenCategoryColor(segment.category)}
+                  />
+                ) : (
+                  <rect
+                    key={segment.category}
+                    x={x}
+                    y={segment.y}
+                    width={barW}
+                    height={segment.h}
+                    fill={tokenCategoryColor(segment.category)}
+                  />
+                ),
+              )}
+            </g>
+          );
+        })}
+        {hasReread && rereadCoords.length > 1 ? (
+          <polyline
+            points={rereadLine}
+            className="tm-reread-line"
+            fill="none"
+            stroke="var(--tm-token-reread)"
+            vectorEffect="non-scaling-stroke"
+          />
+        ) : null}
+        {hasReread
+          ? rereadCoords.map((c, i) =>
+              rereadTotals[i] > 0 ? (
+                <circle
+                  key={i}
+                  cx={c.x}
+                  cy={c.y}
+                  r={2}
+                  className="tm-reread-dot"
+                  fill="var(--tm-token-reread)"
+                />
+              ) : null,
+            )
+          : null}
+        <line x1={0} y1={plotH} x2={plotW} y2={plotH} className="tm-chart-axis" />
+      </g>
+    </svg>
+  );
+}
+
+function RankedBars({
+  items,
+  plotW,
+  plotH,
+  onHover,
+}: {
+  items: { group: TelemetryTokens["groups"][number]; value: number }[];
+  plotW: number;
+  plotH: number;
+  onHover: (state: ChartTooltipState | null) => void;
+}) {
+  const max = niceMax(Math.max(...items.map((item) => item.value), 0));
+  const rowSlot = plotH / Math.max(items.length, 1);
+  const barH = Math.min(24, rowSlot * (1 - BAR_GAP_RATIO));
+  // A wide gutter for the group labels so bars start clear of them; labels are
+  // truncated to a character budget that stays inside this gutter at both the
+  // desktop and (larger) mobile row-label type sizes, so nothing spills past
+  // the card's left edge. The full name lives in a <title> tooltip.
+  const labelW = 120;
+  const LABEL_MAX_CHARS = 14;
+
+  return (
+    <svg
+      viewBox={`0 0 ${CHART_W} ${Math.max(plotH, items.length * rowSlot) + PAD_TOP + PAD_BOTTOM}`}
+      className="tm-chart-svg"
+      role="img"
+      aria-label={`Token usage ranked across ${items.length} groups, up to ${formatCompactNumber(max)} tokens`}
+    >
+      <g transform={`translate(${PAD_LEFT + labelW},${PAD_TOP})`}>
+        {items.map(({ group, value }, i) => {
+          const y = i * rowSlot + (rowSlot - barH) / 2;
+          const w = max > 0 ? (value / max) * (plotW - labelW) : 0;
+          return (
+            <g
+              key={group.key}
+              tabIndex={0}
+              role="img"
+              aria-label={`${group.label}: ${formatCompactNumber(value)} tokens`}
+              className="tm-bar-group"
+              onMouseEnter={(event) =>
+                onHover({
+                  left: event.clientX,
+                  top: event.clientY,
+                  title: group.label,
+                  rows: [{ key: group.key, label: "tokens", value: formatCompactNumber(value) }],
+                })
+              }
+              onMouseMove={(event) =>
+                onHover({
+                  left: event.clientX,
+                  top: event.clientY,
+                  title: group.label,
+                  rows: [{ key: group.key, label: "tokens", value: formatCompactNumber(value) }],
+                })
+              }
+              onMouseLeave={() => onHover(null)}
+              onFocus={() =>
+                onHover({
+                  left: 0,
+                  top: 0,
+                  title: group.label,
+                  rows: [{ key: group.key, label: "tokens", value: formatCompactNumber(value) }],
+                })
+              }
+              onBlur={() => onHover(null)}
+            >
+              <text
+                x={-8}
+                y={y + barH / 2}
+                textAnchor="end"
+                dy="0.32em"
+                className="tm-chart-axis-label tm-rowlabel"
+              >
+                <title>{group.label}</title>
+                {truncateLabel(group.label, LABEL_MAX_CHARS)}
+              </text>
+              <path d={roundedRightRectPath(0, y, w, barH, 4)} fill={seriesColor(i)} />
+            </g>
+          );
+        })}
+      </g>
+    </svg>
+  );
+}

@@ -1,0 +1,21 @@
+{
+  "id": "pourchot/tps-2022-05-important-features-updated",
+  "id_no": 27183112,
+  "title": "TPS_2022_05 Important Features updated",
+  "code_file": "tps-2022-05-important-features-updated.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "competition_sources": [
+    "tabular-playground-series-may-2022"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:2526686e2bde6b3af5288661aa6e5c0c5b470412eaf284a0017a4c73c6a9bd89",
+  "machine_shape": "None"
+}

@@ -1,0 +1,1337 @@
+import {
+  memo,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from "react";
+
+import {
+  agentForTransport,
+  fidelityFor,
+  humaniseBackend,
+  type BackendCatalog,
+} from "@/lib/backends";
+import { isModifiedEnterShortcut } from "@/lib/keyboard";
+import { EventRecord, SessionTransport } from "@/lib/types";
+import {
+  normalizeToolName,
+  parseEvent,
+  planTextForEvent,
+  type EventDiffPreview,
+} from "@/lib/events";
+import {
+  isTodoToolEvent,
+  readTodoEntries,
+  summarizeTodos,
+  type TodoEntry,
+} from "@/lib/todos";
+import { MessageAttachments } from "@/components/AttachmentTray";
+import { PlanApprovalCard } from "@/components/ApprovalCard";
+import { CopyMessageButton } from "@/components/CopyMessageButton";
+import { DiffPreview } from "@/components/DiffPreview";
+import { MarkdownMessage } from "@/components/MarkdownMessage";
+import { TodoListBody } from "@/components/TodoList";
+
+// Three-state resolution of an AskUserQuestion, derived once over the loaded
+// events from durable answer evidence: a correlated ask_user_question_answer
+// user event.
+export type AskQuestionResolution =
+  | { state: "pending" }
+  | { state: "answered"; answerEvent: EventRecord }
+  | { state: "closed_unanswered"; resultEvent: EventRecord };
+
+export interface ToolPair {
+  call: EventRecord | null;
+  result: EventRecord | null;
+  itemId: string;
+  ts: string;
+  sequence: number;
+  // Set only for AskUserQuestion pairs; attached by buildTranscriptItems so
+  // grouped runs and ordinary rows agree without re-scanning per card.
+  askResolution?: AskQuestionResolution;
+}
+
+export interface AskQuestionOption {
+  label: string;
+  description?: string;
+}
+
+// The selectable option list shared by the transcript's AskUserQuestion card
+// and the inbox question block, so both render options identically.
+export function AskQuestionOptions({
+  options,
+  selected,
+  onToggle,
+  disabled = false,
+}: {
+  options: AskQuestionOption[];
+  selected: Set<string>;
+  onToggle: (label: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <ul className="ask-question-options">
+      {options.map((option) => {
+        const isSelected = selected.has(option.label);
+        return (
+          <li key={option.label}>
+            <button
+              type="button"
+              className={`ask-option ${isSelected ? "selected" : ""}`}
+              onClick={() => onToggle(option.label)}
+              disabled={disabled}
+            >
+              <span className="ask-option-label">{option.label}</span>
+              {option.description ? (
+                <span className="ask-option-desc">{option.description}</span>
+              ) : null}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+interface AskUserQuestion {
+  question: string;
+  header?: string;
+  options: AskQuestionOption[];
+  multiSelect?: boolean;
+}
+
+export interface AskAnswerEntry {
+  question: string;
+  answer: string | null;
+  notes?: string;
+}
+
+// Measure the meta strip's real width and surface it as `--meta-reserve`
+// on the bubble, so the inline phantom at the end of the last paragraph
+// can be sized to exactly the meta's footprint plus a small gap. With
+// this, the browser's line-breaker decides cleanly whether the meta fits
+// on the last line (no overlap) or has to wrap to its own row (no
+// hardcoded 116px guess that sometimes lets text bleed under the meta).
+function useMetaReserve(gap: number = 16) {
+  const metaRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const node = metaRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 0) setWidth(Math.ceil(w));
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const style =
+    width != null
+      ? ({ "--meta-reserve": `${width + gap}px` } as CSSProperties)
+      : undefined;
+  return { metaRef, style };
+}
+
+export function PendingUserInputCard({
+  text,
+  ts,
+}: {
+  text: string;
+  ts: string;
+}) {
+  const { metaRef, style } = useMetaReserve();
+  return (
+    <article
+      className="panel transcript codex user_input pending-optimistic"
+      aria-label="Message from you"
+      style={style}
+    >
+      <MarkdownMessage text={text} />
+      <div ref={metaRef} className="transcript-meta">
+        <span className="badge user">you</span>
+        <span className="role-time">{formatTime(ts)}</span>
+      </div>
+    </article>
+  );
+}
+
+interface TranscriptCardProps {
+  event: EventRecord;
+  transport: SessionTransport;
+  catalog?: BackendCatalog;
+  pair?: ToolPair;
+  onAnswerAskQuestion?: (
+    text: string,
+    toolUseId?: string,
+    answers?: AskAnswerEntry[],
+  ) => Promise<boolean> | void;
+  onOpenWorkspaceFile?: (path: string) => void;
+}
+
+export const TranscriptCard = memo(function TranscriptCard({
+  event,
+  transport,
+  catalog,
+  pair,
+  onAnswerAskQuestion,
+  onOpenWorkspaceFile,
+}: TranscriptCardProps) {
+  if (fidelityFor(transport, catalog) === "structured") {
+    if (pair) {
+      return (
+        <ToolPairCard
+          pair={pair}
+          onAnswerAskQuestion={onAnswerAskQuestion}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
+      );
+    }
+    return (
+      <StructuredCard
+        event={event}
+        transport={transport}
+        catalog={catalog}
+        onAnswerAskQuestion={onAnswerAskQuestion}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    );
+  }
+  return <HeuristicCard event={event} />;
+});
+
+function StructuredCard({
+  event,
+  transport,
+  catalog,
+  onAnswerAskQuestion,
+  onOpenWorkspaceFile,
+}: {
+  event: EventRecord;
+  transport: SessionTransport;
+  catalog?: BackendCatalog;
+  onAnswerAskQuestion?: (
+    text: string,
+    toolUseId?: string,
+  ) => Promise<boolean> | void;
+  onOpenWorkspaceFile?: (path: string) => void;
+}) {
+  // Convention: the chat-bubble agent label is the first word of the agent
+  // that owns this transport, lowercased ("Claude Code" → "claude", "Codex"
+  // → "codex"). Resolved from the transport's owning agent so it stays correct
+  // regardless of the transport's user-facing name.
+  const owner = agentForTransport(transport, catalog);
+  const agentLabel =
+    (owner ? humaniseBackend(owner, catalog).split(" ")[0].toLowerCase() : "") ||
+    transport;
+  return (
+    <CodexCard
+      event={event}
+      agentLabel={agentLabel}
+      onAnswerAskQuestion={onAnswerAskQuestion}
+      onOpenWorkspaceFile={onOpenWorkspaceFile}
+    />
+  );
+}
+
+function CodexCard({
+  event,
+  agentLabel = "codex",
+  onAnswerAskQuestion,
+  onOpenWorkspaceFile,
+}: {
+  event: EventRecord;
+  agentLabel?: string;
+  onAnswerAskQuestion?: (
+    text: string,
+    toolUseId?: string,
+  ) => Promise<boolean> | void;
+  onOpenWorkspaceFile?: (path: string) => void;
+}) {
+  switch (event.kind) {
+    case "user_input": {
+      if (event.metadata?.kind === "ask_user_question_answer") {
+        return <AskAnswerSummaryCard event={event} />;
+      }
+      return <UserMessageBubble event={event} />;
+    }
+    case "agent_output":
+      // A blank agent message — e.g. a whitespace-only OpenCode text part —
+      // carries nothing to render and would collapse to a zero-width bubble
+      // whose absolutely-positioned meta strip overflows (the timestamp wraps
+      // one character per line). Drop it.
+      if (!event.text.trim()) {
+        return null;
+      }
+      if (event.metadata?.item_kind === "reasoning") {
+        return <ReasoningDisclosure event={event} agentLabel={agentLabel} />;
+      }
+      return <AgentMessageBubble event={event} agentLabel={agentLabel} />;
+    case "tool_call": {
+      const ask = parseAskUserQuestion(event);
+      if (ask) {
+        return (
+          <AskUserQuestionCard
+            event={event}
+            questions={ask}
+            onAnswer={onAnswerAskQuestion}
+            resolution={{ state: "pending" }}
+          />
+        );
+      }
+      if (isTodoToolEvent(event)) {
+        return <TodoToolCard event={event} />;
+      }
+      return (
+        <ToolDisclosure
+          event={event}
+          bodyClassName="shell"
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
+      );
+    }
+    case "tool_result":
+      if (isTodoToolEvent(event)) {
+        return <TodoToolCard event={event} />;
+      }
+      return (
+        <ToolDisclosure
+          event={event}
+          bodyClassName="output"
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
+      );
+    case "approval_request":
+      // The interactive ApprovalCard sits above the composer with the same
+      // text and Approve/Decline buttons; rendering the event here too would
+      // duplicate the prompt. The chronological record lives in the
+      // post-resolution "Approval response sent: …" system note.
+      return null;
+    case "system_note":
+    case "status_update": {
+      const plan = planTextForEvent(event);
+      if (plan) {
+        return (
+          <PlanApprovalCard
+            agentLabel={agentLabel}
+            className="transcript codex plan-output"
+            plan={plan}
+            prompt="Plan"
+            timeLabel={formatTime(event.ts)}
+          />
+        );
+      }
+      if (event.metadata?.builtin_command === "/status") {
+        return <CommandStatusCard event={event} agentLabel={agentLabel} />;
+      }
+      return <SystemRule event={event} onOpenWorkspaceFile={onOpenWorkspaceFile} />;
+    }
+    default:
+      return <HeuristicCard event={event} />;
+  }
+}
+
+function UserMessageBubble({ event }: { event: EventRecord }) {
+  const { metaRef, style } = useMetaReserve();
+  return (
+    <article
+      className="panel transcript codex user_input"
+      aria-label="Message from you"
+      style={style}
+    >
+      <MarkdownMessage text={event.text} />
+      <MessageAttachments event={event} />
+      <div ref={metaRef} className="transcript-meta">
+        <span className="badge user">you</span>
+        <span className="role-time">{formatTime(event.ts)}</span>
+        <CopyMessageButton text={event.text} />
+      </div>
+    </article>
+  );
+}
+
+function AgentMessageBubble({
+  event,
+  agentLabel,
+}: {
+  event: EventRecord;
+  agentLabel: string;
+}) {
+  const { metaRef, style } = useMetaReserve();
+  return (
+    <article
+      className="panel transcript codex agent_output"
+      aria-label={`Message from ${agentLabel}`}
+      style={style}
+    >
+      <MarkdownMessage text={event.text} />
+      <div ref={metaRef} className="transcript-meta">
+        <span className="badge agent">{agentLabel}</span>
+        <span className="role-time">{formatTime(event.ts)}</span>
+        <CopyMessageButton text={event.text} />
+      </div>
+    </article>
+  );
+}
+
+function CommandStatusCard({
+  event,
+  agentLabel,
+}: {
+  event: EventRecord;
+  agentLabel: string;
+}) {
+  return (
+    <article className="panel transcript codex command-status">
+      <div className="transcript-role">
+        <span className="badge neutral">/status</span>
+        <span className="role-time">{formatTime(event.ts)}</span>
+        <span className="muted">{agentLabel}</span>
+        <CopyMessageButton text={event.text} />
+      </div>
+      <MarkdownMessage text={event.text} />
+    </article>
+  );
+}
+
+function SystemRule({
+  event,
+  onOpenWorkspaceFile,
+}: {
+  event: EventRecord;
+  onOpenWorkspaceFile?: (path: string) => void;
+}) {
+  const diffPreview = parseEvent(event).diffPreview;
+  if (diffPreview) {
+    return (
+      <details className="panel transcript codex system diff-system-card">
+        <summary className="transcript-summary">
+          <div className="transcript-role">
+            <span className="badge neutral">changes</span>
+            <span className="role-time">{formatTime(event.ts)}</span>
+          </div>
+          <p className="transcript-preview">{event.text}</p>
+        </summary>
+        <DiffPreview preview={diffPreview} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+      </details>
+    );
+  }
+  return (
+    <div className="system-rule" role="note">
+      <span className="system-rule-body">
+        <span className="system-rule-time">{formatTime(event.ts)}</span>
+        <span className="system-rule-text" title={event.text}>
+          {event.text}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+function ReasoningDisclosure({
+  event,
+  agentLabel,
+}: {
+  event: EventRecord;
+  agentLabel: string;
+}) {
+  // Reasoning is the model's scratchpad — collapsed by default with a
+  // single-line preview so the transcript stays scannable, expandable
+  // when the user wants the full chain of thought. The mechanism is
+  // backend-agnostic: any plugin emitting metadata.item_kind="reasoning"
+  // gets this treatment.
+  const preview = reasoningPreview(event.text);
+  return (
+    <details className="panel transcript codex agent_output reasoning-disclosure">
+      <summary className="transcript-summary">
+        <div className="transcript-role">
+          <span className="badge agent reasoning">{agentLabel} thinking</span>
+          <span className="role-time">{formatTime(event.ts)}</span>
+        </div>
+        {preview ? <p className="transcript-preview">{preview}</p> : null}
+      </summary>
+      <MarkdownMessage text={event.text} />
+    </details>
+  );
+}
+
+function reasoningPreview(text: string, max = 140): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= max) return collapsed;
+  return `${collapsed.slice(0, max - 1).trimEnd()}…`;
+}
+
+interface ToolBadge {
+  glyph: string;
+  variant: string;
+  label: string;
+}
+
+function toolBadgeFor(toolName: string | null | undefined): ToolBadge {
+  // Visually distinct glyphs help the user scan a long transcript and tell
+  // a shell command apart from a file edit at a glance. The variant maps to
+  // a CSS-only colour theme so we don't ship icon assets.
+  switch (toolName) {
+    case "Bash":
+      return { glyph: "›_", variant: "bash", label: "Bash" };
+    case "Read":
+      return { glyph: "▤", variant: "read", label: toolName };
+    case "Edit":
+    case "MultiEdit":
+    case "NotebookEdit":
+      return { glyph: "✎", variant: "edit", label: toolName };
+    case "Write":
+      return { glyph: "✚", variant: "write", label: toolName };
+    case "Grep":
+      return { glyph: "⌕", variant: "grep", label: toolName };
+    case "Glob":
+      return { glyph: "✱", variant: "glob", label: toolName };
+    case "WebFetch":
+    case "WebSearch":
+      return { glyph: "⌖", variant: "web", label: toolName };
+    case "Task":
+    case "Agent":
+      return { glyph: "◇", variant: "task", label: toolName };
+    case "TodoWrite":
+      return { glyph: "☑", variant: "todo", label: "Todo" };
+    case "AskUserQuestion":
+      return { glyph: "?", variant: "task", label: "Ask" };
+    default:
+      if (toolName) {
+        return { glyph: "ƒ", variant: "default", label: toolName };
+      }
+      return { glyph: "→", variant: "default", label: "tool" };
+  }
+}
+
+export function readToolName(event: EventRecord): string | null {
+  const meta = event.metadata as Record<string, unknown> | undefined;
+  if (!meta) return null;
+  if (typeof meta.tool_name === "string" && meta.tool_name) {
+    return normalizeToolName(meta.tool_name);
+  }
+  return null;
+}
+
+function isFileEditToolName(toolName: string | null | undefined): boolean {
+  return (
+    toolName === "Edit" ||
+    toolName === "MultiEdit" ||
+    toolName === "Write" ||
+    toolName === "NotebookEdit"
+  );
+}
+
+function fallbackDiffPreviewForFileEdit(
+  events: (EventRecord | null | undefined)[],
+  phase: EventDiffPreview["phase"],
+): EventDiffPreview | null {
+  for (const event of events) {
+    if (!event || !isFileEditToolName(readToolName(event))) {
+      continue;
+    }
+    const path = filePathForToolInput(toolInputForEvent(event));
+    if (!path) {
+      continue;
+    }
+    return {
+      schemaVersion: 1,
+      phase,
+      files: [
+        {
+          path,
+          oldPath: null,
+          changeType: "update",
+          diff: "",
+          additions: 0,
+          deletions: 0,
+          truncated: false,
+          binary: false,
+          unavailableReason: "Diff preview was not included by the backend.",
+        },
+      ],
+      totalAdditions: 0,
+      totalDeletions: 0,
+      truncated: false,
+    };
+  }
+  return null;
+}
+
+function toolInputForEvent(event: EventRecord): Record<string, unknown> | null {
+  const meta = event.metadata as Record<string, unknown> | undefined;
+  const payload = asRecord(meta?.payload);
+  return asRecord(payload?.input) ?? asRecord(meta?.tool_input);
+}
+
+function filePathForToolInput(input: Record<string, unknown> | null): string | null {
+  if (!input) {
+    return null;
+  }
+  const value = input.file_path ?? input.path ?? input.notebook_path;
+  return typeof value === "string" && value ? value : null;
+}
+
+export function ToolCallRunGroup({
+  toolNames,
+  initiallyOpen,
+  children,
+}: {
+  toolNames: string[];
+  initiallyOpen: boolean;
+  children: React.ReactNode;
+}) {
+  const count = toolNames.length;
+  let bashCount = 0;
+  let editCount = 0;
+  let readCount = 0;
+  let todoCount = 0;
+  let otherCount = 0;
+  for (const name of toolNames) {
+    if (name === "Bash") bashCount++;
+    else if (isFileEditToolName(name)) editCount++;
+    else if (name === "Read" || name === "Grep" || name === "Glob") readCount++;
+    else if (name === "TodoWrite") todoCount++;
+    else otherCount++;
+  }
+
+  return (
+    <details className="tool-call-run" open={initiallyOpen}>
+      <summary className="tool-call-run-summary">
+        <div className="tool-run-chips">
+          {bashCount > 0 && (
+            <span className="tool-run-chip bash">
+              <span className="tool-run-glyph">›_</span>
+              <span className="tool-run-label">bash</span>
+              <span className="tool-run-count">×{bashCount}</span>
+            </span>
+          )}
+          {editCount > 0 && (
+            <span className="tool-run-chip edit">
+              <span className="tool-run-glyph">✎</span>
+              <span className="tool-run-label">edit</span>
+              <span className="tool-run-count">×{editCount}</span>
+            </span>
+          )}
+          {readCount > 0 && (
+            <span className="tool-run-chip read">
+              <span className="tool-run-glyph">▤</span>
+              <span className="tool-run-label">read</span>
+              <span className="tool-run-count">×{readCount}</span>
+            </span>
+          )}
+          {todoCount > 0 && (
+            <span className="tool-run-chip todo">
+              <span className="tool-run-glyph">☑</span>
+              <span className="tool-run-label">todos</span>
+              <span className="tool-run-count">×{todoCount}</span>
+            </span>
+          )}
+          {otherCount > 0 && (
+            <span className="tool-run-chip other">
+              <span className="tool-run-glyph">ƒ</span>
+              <span className="tool-run-label">other</span>
+              <span className="tool-run-count">×{otherCount}</span>
+            </span>
+          )}
+        </div>
+        <span className="tool-run-total">{count} call{count !== 1 ? "s" : ""}</span>
+      </summary>
+      <div className="tool-call-run-children">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+function ToolDisclosure({
+  event,
+  bodyClassName,
+  onOpenWorkspaceFile,
+}: {
+  event: EventRecord;
+  bodyClassName: string;
+  onOpenWorkspaceFile?: (path: string) => void;
+}) {
+  const tool = toolBadgeFor(readToolName(event));
+  const preview = previewForToolEvent(event, tool.label);
+  const kindLabel = event.kind === "tool_call" ? "call" : "result";
+  const diffPreview =
+    parseEvent(event).diffPreview ||
+    fallbackDiffPreviewForFileEdit(
+      [event],
+      event.kind === "tool_result" ? "applied" : "proposed",
+    );
+  return (
+    <details className={`panel transcript codex ${event.kind} tool-disclosure`}>
+      <summary className="transcript-summary">
+        <div className="transcript-role">
+          <span className={`tool-glyph ${tool.variant}`} aria-hidden>
+            {tool.glyph}
+          </span>
+          <span className="tool-name">{tool.label}</span>
+          <span className="badge tool-status pending">{kindLabel}</span>
+          <span className="role-time">{formatTime(event.ts)}</span>
+        </div>
+        {preview ? <p className="transcript-preview">{preview}</p> : null}
+      </summary>
+      {diffPreview ? (
+        <DiffPreview preview={diffPreview} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+      ) : (
+        <pre className={bodyClassName}>{event.text}</pre>
+      )}
+    </details>
+  );
+}
+
+function ToolPairCard({
+  pair,
+  onAnswerAskQuestion,
+  onOpenWorkspaceFile,
+}: {
+  pair: ToolPair;
+  onAnswerAskQuestion?: (
+    text: string,
+    toolUseId?: string,
+  ) => Promise<boolean> | void;
+  onOpenWorkspaceFile?: (path: string) => void;
+}) {
+  const { call, result } = pair;
+  if (call) {
+    const ask = parseAskUserQuestion(call);
+    if (ask) {
+      return (
+        <AskUserQuestionCard
+          event={call}
+          questions={ask}
+          onAnswer={onAnswerAskQuestion}
+          resolution={pair.askResolution ?? { state: "pending" }}
+        />
+      );
+    }
+  }
+  if (isTodoToolEvent(call) || isTodoToolEvent(result)) {
+    return <TodoToolPairCard pair={pair} />;
+  }
+  const status = result ? "complete" : "pending";
+  const tool = toolBadgeFor(readToolName(call ?? result ?? ({} as EventRecord)));
+  const diffPreview =
+    (result ? parseEvent(result).diffPreview : null) ||
+    (call ? parseEvent(call).diffPreview : null) ||
+    fallbackDiffPreviewForFileEdit([call, result], result ? "applied" : "proposed");
+  const summary =
+    (call ? previewForToolEvent(call, tool.label) : null) ||
+    (result ? previewForToolEvent(result, tool.label) : null) ||
+    "tool call";
+  return (
+    <details className="panel transcript codex tool_pair tool-disclosure">
+      <summary className="transcript-summary">
+        <div className="transcript-role">
+          <span className={`tool-glyph ${tool.variant}`} aria-hidden>
+            {tool.glyph}
+          </span>
+          <span className="tool-name">{tool.label}</span>
+          <span className={`badge tool-status ${status}`}>{status}</span>
+          <span className="role-time">{formatTime(pair.ts)}</span>
+        </div>
+        {summary ? <p className="transcript-preview">{summary}</p> : null}
+      </summary>
+      <div className="tool-pair-body">
+        {diffPreview ? (
+          <DiffPreview preview={diffPreview} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+        ) : (
+          <>
+            {call ? (
+              <div className="tool-pair-section">
+                <p className="tool-pair-label">call</p>
+                <pre className="shell">{call.text}</pre>
+              </div>
+            ) : null}
+            {result ? (
+              <div className="tool-pair-section">
+                <p className="tool-pair-label">result</p>
+                <pre className="output">{result.text}</pre>
+              </div>
+            ) : (
+              <div className="tool-pair-section">
+                <p className="tool-pair-label muted">awaiting result…</p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </details>
+  );
+}
+
+// Fixed badge for the cross-backend Todo card. Codex's todo_list is a
+// built-in item (not a tool the agent invokes), so don't borrow Claude's
+// "TodoWrite" tool name to look it up — render the same badge for both.
+const TODO_BADGE = { glyph: "☑", variant: "todo", label: "Todos" } as const;
+
+// The live list lives in the docked TaskProgressDock; in the transcript the
+// todo event is just a chronological marker ("when did this list exist") that
+// expands on demand, so it doesn't duplicate the dock or shove the
+// conversation down.
+function TodoMarkerCard({ todos, ts }: { todos: TodoEntry[] | null; ts: string }) {
+  const progress = summarizeTodos(todos);
+  const summary = progress
+    ? `${progress.total} item${progress.total === 1 ? "" : "s"} · ${progress.completed}/${progress.total} done`
+    : "no items";
+  return (
+    <details className="panel transcript codex todo-marker-card">
+      <summary className="transcript-summary todo-marker-summary">
+        <span className={`tool-glyph ${TODO_BADGE.variant}`} aria-hidden>
+          {TODO_BADGE.glyph}
+        </span>
+        <span className="tool-name">{TODO_BADGE.label}</span>
+        <span className="todo-marker-meta">{summary}</span>
+        <span className="role-time">{formatTime(ts)}</span>
+      </summary>
+      <div className="todo-marker-body">
+        <TodoListBody todos={todos} />
+      </div>
+    </details>
+  );
+}
+
+function TodoToolCard({ event }: { event: EventRecord }) {
+  return <TodoMarkerCard todos={readTodoEntries(event)} ts={event.ts} />;
+}
+
+function TodoToolPairCard({ pair }: { pair: ToolPair }) {
+  const todos = readTodoEntries(pair.result) ?? readTodoEntries(pair.call);
+  return <TodoMarkerCard todos={todos} ts={pair.ts} />;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function parseAskUserQuestion(event: EventRecord): AskUserQuestion[] | null {
+  if (readToolName(event) !== "AskUserQuestion") {
+    return null;
+  }
+  const payload = event.metadata?.payload as { input?: unknown } | undefined;
+  const input = payload?.input as { questions?: unknown } | undefined;
+  const raw = input?.questions;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return null;
+  }
+  const parsed: AskUserQuestion[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const q = entry as Record<string, unknown>;
+    if (typeof q.question !== "string") continue;
+    const optionsRaw = Array.isArray(q.options) ? q.options : [];
+    const options: AskQuestionOption[] = [];
+    for (const opt of optionsRaw) {
+      if (!opt || typeof opt !== "object") continue;
+      const o = opt as Record<string, unknown>;
+      if (typeof o.label !== "string") continue;
+      options.push({
+        label: o.label,
+        description: typeof o.description === "string" ? o.description : undefined,
+      });
+    }
+    if (!options.length) continue;
+    parsed.push({
+      question: q.question,
+      header: typeof q.header === "string" ? q.header : undefined,
+      options,
+      multiSelect: q.multiSelect === true,
+    });
+  }
+  return parsed.length ? parsed : null;
+}
+
+function AskUserQuestionCard({
+  event,
+  questions,
+  onAnswer,
+  resolution,
+}: {
+  event: EventRecord;
+  questions: AskUserQuestion[];
+  onAnswer?: (
+    text: string,
+    toolUseId?: string,
+    answers?: AskAnswerEntry[],
+  ) => Promise<boolean> | void;
+  resolution: AskQuestionResolution;
+}) {
+  const answered = resolution.state === "answered";
+  const closedUnanswered = resolution.state === "closed_unanswered";
+  const closedResultEvent =
+    resolution.state === "closed_unanswered" ? resolution.resultEvent : null;
+  const [submitting, setSubmitting] = useState(false);
+  const [picked, setPicked] = useState<Record<number, Set<string>>>({});
+  const [notes, setNotes] = useState<Record<number, string>>({});
+  const [notesOpen, setNotesOpen] = useState<Record<number, boolean>>({});
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const total = questions.length;
+  const safeIndex = Math.min(activeIndex, Math.max(0, total - 1));
+  const currentEntry = questions[safeIndex];
+  const paginated = total > 1;
+
+  function toggleOption(questionIndex: number, label: string, multiSelect: boolean) {
+    setPicked((current) => {
+      const next = { ...current };
+      const existing = next[questionIndex] ?? new Set<string>();
+      const updated = new Set(existing);
+      if (multiSelect) {
+        if (updated.has(label)) updated.delete(label);
+        else updated.add(label);
+      } else {
+        if (updated.has(label) && updated.size === 1) updated.clear();
+        else {
+          updated.clear();
+          updated.add(label);
+        }
+      }
+      next[questionIndex] = updated;
+      return next;
+    });
+  }
+
+  function toggleNote(questionIndex: number) {
+    setNotesOpen((current) => ({
+      ...current,
+      [questionIndex]: !current[questionIndex],
+    }));
+  }
+
+  async function submit() {
+    if (!onAnswer || resolution.state !== "pending" || submitting) return;
+    // Match the Claude binary's mapToolResultToToolResultBlockParam shape so
+    // the model parses the answer the same way native Claude Code does:
+    // `"<question>"="<answer>" user notes: <notes>`, joined by `, ` across
+    // questions. Questions with neither an answer nor notes are skipped.
+    const segments: string[] = [];
+    const structured: AskAnswerEntry[] = [];
+    questions.forEach((entry, index) => {
+      const selections = picked[index];
+      const note = (notes[index] ?? "").trim();
+      const hasSelections = Boolean(selections && selections.size > 0);
+      if (!hasSelections && !note) return;
+      const parts: string[] = [];
+      let answerValue: string | null = null;
+      if (hasSelections) {
+        answerValue = Array.from(selections!).join(", ");
+        parts.push(`"${entry.question}"="${answerValue}"`);
+      } else {
+        parts.push(`"${entry.question}"=(no option selected)`);
+      }
+      if (note) {
+        parts.push(`user notes: ${note}`);
+      }
+      segments.push(parts.join(" "));
+      structured.push({
+        question: entry.question,
+        answer: answerValue,
+        notes: note || undefined,
+      });
+    });
+    if (!segments.length) return;
+    setSubmitting(true);
+    const toolUseId =
+      typeof event.metadata?.tool_use_id === "string"
+        ? (event.metadata.tool_use_id as string)
+        : undefined;
+    try {
+      await onAnswer(segments.join(", "), toolUseId, structured);
+      setPicked({});
+      setNotes({});
+      setNotesOpen({});
+      setActiveIndex(0);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const totalPicked = Object.values(picked).reduce(
+    (acc, set) => acc + set.size,
+    0,
+  );
+  const totalNotes = Object.values(notes).filter((value) => value.trim()).length;
+  const interactive = Boolean(onAnswer) && resolution.state === "pending";
+  const canSubmit = interactive && !submitting && (totalPicked > 0 || totalNotes > 0);
+
+  function handleNoteKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!isModifiedEnterShortcut(event)) {
+      return;
+    }
+    event.preventDefault();
+    if (!canSubmit) {
+      return;
+    }
+    void submit();
+  }
+
+  return (
+    <article className="panel transcript codex tool_call ask-user-question">
+      <div className="transcript-role">
+        <span className="tool-glyph task" aria-hidden>?</span>
+        <span className="tool-name">Ask you</span>
+        {answered ? (
+          <span className="badge tool-status complete">answered</span>
+        ) : closedUnanswered ? (
+          <span className="badge tool-status unanswered">not answered</span>
+        ) : (
+          <span className="badge tool-status pending">awaiting answer</span>
+        )}
+        <span className="role-time">{formatTime(event.ts)}</span>
+      </div>
+      {currentEntry ? (() => {
+        const index = safeIndex;
+        const entry = currentEntry;
+        const selections = picked[index] ?? new Set<string>();
+        const filledForQuestion = (i: number) =>
+          (picked[i] && picked[i].size > 0) || Boolean((notes[i] ?? "").trim());
+        return (
+          <div className="ask-question" key={index}>
+            {paginated ? (
+              <div className="ask-question-pager">
+                <span className="muted">
+                  Question {index + 1} of {total}
+                  {filledForQuestion(index) ? " · answered" : ""}
+                </span>
+                <div className="ask-question-pager-dots" aria-hidden>
+                  {questions.map((_, dotIndex) => (
+                    <span
+                      key={dotIndex}
+                      className={`ask-question-pager-dot${
+                        dotIndex === index ? " current" : ""
+                      }${filledForQuestion(dotIndex) ? " filled" : ""}`}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <div className="ask-question-head">
+              {entry.header ? (
+                <span className="badge neutral ask-question-chip">
+                  {entry.header}
+                </span>
+              ) : null}
+              <p className="ask-question-text">{entry.question}</p>
+              {entry.multiSelect ? (
+                <span className="meta">multi-select</span>
+              ) : null}
+            </div>
+            <AskQuestionOptions
+              options={entry.options}
+              selected={selections}
+              onToggle={(label) =>
+                toggleOption(index, label, entry.multiSelect ?? false)
+              }
+              disabled={!interactive}
+            />
+            {interactive ? (
+              notesOpen[index] ? (
+                <div className="ask-question-note">
+                  <textarea
+                    className="ask-question-note-input"
+                    value={notes[index] ?? ""}
+                    onChange={(e) =>
+                      setNotes((current) => ({
+                        ...current,
+                        [index]: e.target.value,
+                      }))
+                    }
+                    onKeyDown={handleNoteKeyDown}
+                    placeholder="Type your own answer or add a note here…"
+                    rows={2}
+                    disabled={submitting}
+                    aria-keyshortcuts="Meta+Enter Control+Enter"
+                  />
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => toggleNote(index)}
+                    disabled={submitting}
+                  >
+                    Hide note
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="link-button ask-question-note-toggle"
+                  onClick={() => toggleNote(index)}
+                  disabled={submitting}
+                >
+                  + Other / Custom response
+                </button>
+              )
+            ) : null}
+            {paginated && interactive ? (
+              <div className="ask-question-nav">
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={submitting || index === 0}
+                  onClick={() => setActiveIndex((i) => Math.max(0, i - 1))}
+                >
+                  ← Previous
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={submitting || index === total - 1}
+                  onClick={() => setActiveIndex((i) => Math.min(total - 1, i + 1))}
+                >
+                  Next →
+                </button>
+              </div>
+            ) : null}
+          </div>
+        );
+      })() : null}
+      {interactive ? (
+        <div className="action-row">
+          <button
+            type="button"
+            className="primary"
+            disabled={!canSubmit}
+            onClick={() => void submit()}
+          >
+            {submitting ? "Sending…" : "Send answers"}
+          </button>
+          {totalPicked + totalNotes > 0 ? (
+            <button
+              type="button"
+              className="secondary"
+              disabled={submitting}
+              onClick={() => {
+                setPicked({});
+                setNotes({});
+              }}
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {closedUnanswered ? (
+        <div className="ask-question-closed">
+          <p className="ask-question-closed-note">
+            This question ended without a recorded answer and can no longer be
+            answered.
+          </p>
+          {closedResultEvent?.text?.trim() ? (
+            <details className="ask-question-diagnostic">
+              <summary>Provider result</summary>
+              <pre className="output">{closedResultEvent.text}</pre>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function AskAnswerSummaryCard({ event }: { event: EventRecord }) {
+  const meta = event.metadata as Record<string, unknown> | undefined;
+  const rawAnswers = Array.isArray(meta?.answers) ? meta!.answers : [];
+  const answers = rawAnswers
+    .filter(
+      (item): item is Record<string, unknown> =>
+        Boolean(item) && typeof item === "object",
+    )
+    .map((item) => ({
+      question: typeof item.question === "string" ? item.question : "",
+      answer: typeof item.answer === "string" ? item.answer : null,
+      notes: typeof item.notes === "string" ? item.notes : undefined,
+    }))
+    .filter((item) => item.question);
+
+  return (
+    <article
+      className="panel transcript codex user_input ask-answer-summary"
+      aria-label="Your answers"
+    >
+      {answers.length > 0 ? (
+        <ul className="ask-answer-list">
+          {answers.map((entry, index) => (
+            <li key={index} className="ask-answer-item">
+              <p className="ask-answer-question">{entry.question}</p>
+              {entry.answer ? (
+                <p className="ask-answer-value">{entry.answer}</p>
+              ) : (
+                <p className="ask-answer-value muted">No option selected</p>
+              )}
+              {entry.notes ? (
+                <p className="ask-answer-note">
+                  <span className="ask-answer-note-label">Note</span>
+                  {entry.notes}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        // Older events that pre-date the structured payload — fall back to
+        // rendering the raw `"Q"="A"` string Claude received.
+        <pre className="ask-answer-fallback">{event.text}</pre>
+      )}
+      <div className="transcript-meta">
+        <span className="badge user">you</span>
+        <span className="badge neutral ask-answer-chip">answered</span>
+        <span className="role-time">{formatTime(event.ts)}</span>
+      </div>
+    </article>
+  );
+}
+
+function previewForToolEvent(event: EventRecord, toolLabel: string): string {
+  // Prefer extracting a meaningful field from the structured tool input —
+  // event.text for Claude tool_call events is `"ToolName\n{json input}"`,
+  // which is verbose and redundant with the tool-name chip we already render
+  // in the role row.
+  const toolName = readToolName(event);
+  const input = toolInputForEvent(event);
+
+  if (event.kind === "tool_call" && input) {
+    if (toolName === "Bash" && typeof input.command === "string") {
+      return truncate(collapseWhitespace(input.command), 240);
+    }
+    if (isFileEditToolName(toolName)) {
+      const path = filePathForToolInput(input);
+      if (path) {
+        return path;
+      }
+    }
+    if (toolName === "Read" && typeof input.file_path === "string") {
+      const range =
+        typeof input.offset === "number" || typeof input.limit === "number"
+          ? ` · ${typeof input.offset === "number" ? input.offset : 1}..${
+              typeof input.limit === "number"
+                ? (typeof input.offset === "number" ? input.offset : 0) + input.limit
+                : "end"
+            }`
+          : "";
+      return `${input.file_path}${range}`;
+    }
+    if (toolName === "Grep" && typeof input.pattern === "string") {
+      const path = typeof input.path === "string" ? input.path : "";
+      return path ? `${input.pattern}  ·  ${path}` : input.pattern;
+    }
+    if (toolName === "Glob" && typeof input.pattern === "string") {
+      return input.pattern;
+    }
+    if ((toolName === "WebFetch" || toolName === "WebSearch") && typeof input.url === "string") {
+      return input.url;
+    }
+    if (toolName === "WebSearch" && typeof input.query === "string") {
+      return input.query;
+    }
+    if ((toolName === "Task" || toolName === "Agent") && typeof input.description === "string") {
+      return input.description;
+    }
+    if (toolName === "TodoWrite" && Array.isArray(input.todos)) {
+      return `${input.todos.length} todo${input.todos.length === 1 ? "" : "s"}`;
+    }
+    const generic = summarizeStructuredInput(input);
+    if (generic) {
+      return truncate(generic, 240);
+    }
+  }
+
+  // Fall back to summarising the raw event text. Strip a leading tool-name
+  // line (Claude's "Bash\n{json}" shape) so the preview doesn't redundantly
+  // repeat what the role-row chip already shows.
+  return summarizeToolText(event.text, toolLabel);
+}
+
+function summarizeStructuredInput(input: Record<string, unknown>): string {
+  // Generic preview for tool calls that don't have a dedicated branch above
+  // (Skill, ToolSearch, custom MCP tools, etc.). Joining the entries on a
+  // single line surfaces the actual arg values instead of the bare "{" the
+  // line-based fallback used to produce for pretty-printed JSON.
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    parts.push(`${key}: ${formatStructuredValue(value)}`);
+  }
+  return parts.join(", ");
+}
+
+function formatStructuredValue(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return collapseWhitespace(JSON.stringify(value));
+  } catch {
+    return "";
+  }
+}
+
+function summarizeToolText(text: string, toolLabel?: string): string {
+  let lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (toolLabel && lines.length > 0 && lines[0].toLowerCase() === toolLabel.toLowerCase()) {
+    lines = lines.slice(1);
+  }
+  if (!lines.length) {
+    return "No output";
+  }
+  // Pretty-printed JSON puts the opening brace on its own line, which made
+  // the preview read as a useless "{ · N lines". When the body parses as
+  // JSON, collapse it into a one-line key/value summary instead.
+  const joined = lines.join("\n");
+  if (joined.startsWith("{") || joined.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(joined);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const generic = summarizeStructuredInput(parsed as Record<string, unknown>);
+        if (generic) return truncate(generic, 240);
+      }
+      return truncate(collapseWhitespace(JSON.stringify(parsed)), 240);
+    } catch {
+      // Fall through to the line-based summary.
+    }
+  }
+  const first = lines[0];
+  const suffix = lines.length > 1 ? ` · ${lines.length} lines` : "";
+  return `${truncate(first, 160)}${suffix}`;
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function truncate(value: string, max: number): string {
+  if (value.length <= max) {
+    return value;
+  }
+  return `${value.slice(0, max - 1)}…`;
+}
+
+function HeuristicCard({ event }: { event: EventRecord }) {
+  return (
+    <article className={`panel transcript ${event.kind}`}>
+      <div className="transcript-role">
+        <span className="badge neutral">{event.kind.replaceAll("_", " ")}</span>
+        <span className="role-time">{formatTime(event.ts)}</span>
+        <CopyMessageButton text={event.text} />
+      </div>
+      <pre>{event.text}</pre>
+      <MessageAttachments event={event} />
+    </article>
+  );
+}
+
+function formatTime(ts: string): string {
+  return new Date(ts).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}

@@ -1,0 +1,104 @@
+{
+    "schema_version":  1,
+    "competition_id":  "spaceship-titanic",
+    "variant":  "baseline",
+    "pi":  {
+               "version":  "0.84.1",
+               "provider":  "lum-llm",
+               "model":  "nvidia/Gemma-4-26B-A4B-NVFP4",
+               "arguments":  [
+                                 "--mode",
+                                 "json",
+                                 "--no-session",
+                                 "--provider",
+                                 "lum-llm",
+                                 "--model",
+                                 "nvidia/Gemma-4-26B-A4B-NVFP4",
+                                 "--no-extensions",
+                                 "--no-skills",
+                                 "--no-prompt-templates",
+                                 "--no-context-files",
+                                 "--no-approve",
+                                 "@task.md"
+                             ]
+           },
+    "seed":  42,
+    "time_limit_hours":  0.166666666666667,
+    "resource_limits":  {
+                            "max_cpu_threads":  4,
+                            "cpu_affinity_offset":  0,
+                            "affinity_mask":  "0xF",
+                            "priority":  "BelowNormal",
+                            "child_windows_hidden":  true
+                        },
+    "started_at_utc":  "2026-08-13T04:00:48.1597636Z",
+    "ended_at_utc":  "2026-08-13T04:04:51.9803377Z",
+    "duration_seconds":  243.821,
+    "exit_code":  0,
+    "timed_out":  false,
+    "status":  "completed",
+    "public_submission_validation":  {
+                                         "valid":  true,
+                                         "submission":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\workspace\\submission\\submission.csv",
+                                         "sample":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\workspace\\data\\sample_submission.csv",
+                                         "rows":  870,
+                                         "errors":  [
+
+                                                    ]
+                                     },
+    "integrity":  {
+                      "schema_version":  1,
+                      "trace":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\host-logs\\pi-events.jsonl",
+                      "tool_call_count":  15,
+                      "model_identity":  {
+                                             "expected_provider":  "lum-llm",
+                                             "expected_model":  "nvidia/Gemma-4-26B-A4B-NVFP4",
+                                             "observed":  [
+                                                              {
+                                                                  "provider":  "lum-llm",
+                                                                  "model":  "nvidia/Gemma-4-26B-A4B-NVFP4"
+                                                              }
+                                                          ],
+                                             "verified":  true
+                                         },
+                      "clean":  true,
+                      "violations":  [
+
+                                     ]
+                  },
+    "grade":  {
+                  "ok":  true,
+                  "competition_id":  "spaceship-titanic",
+                  "score":  0.80805,
+                  "gold_threshold":  0.82066,
+                  "silver_threshold":  0.81388,
+                  "bronze_threshold":  0.80967,
+                  "median_threshold":  0.79565,
+                  "any_medal":  false,
+                  "gold_medal":  false,
+                  "silver_medal":  false,
+                  "bronze_medal":  false,
+                  "above_median":  true,
+                  "submission_exists":  true,
+                  "valid_submission":  true,
+                  "is_lower_better":  false,
+                  "created_at":  "2026-08-13T12:04:55.909159",
+                  "submission_path":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\workspace\\submission\\submission.csv"
+              },
+    "finalization_exit_codes":  {
+                                    "public_validation":  0,
+                                    "integrity_audit":  0,
+                                    "official_grader":  0
+                                },
+    "artifacts":  {
+                      "workspace":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\workspace",
+                      "task":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\workspace\\task.md",
+                      "trace_jsonl":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\host-logs\\pi-events.jsonl",
+                      "stderr":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\host-logs\\pi-stderr.log",
+                      "code":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\workspace\\code",
+                      "submission":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\workspace\\submission\\submission.csv",
+                      "public_validation":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\host-logs\\submission-validation.json",
+                      "grade":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\host-logs\\grade.json",
+                      "integrity":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\spaceship-titanic\\baseline\\20260813T040047107Z\\host-logs\\integrity.json"
+                  }
+}

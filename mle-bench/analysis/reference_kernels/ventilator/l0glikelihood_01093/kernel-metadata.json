@@ -1,0 +1,21 @@
+{
+  "id": "l0glikelihood/0-1093-single-public-lb",
+  "id_no": 21755588,
+  "title": "0.1093_single_public_lb",
+  "code_file": "0-1093-single-public-lb.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "competition_sources": [
+    "ventilator-pressure-prediction"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:6e3c00286de15827ab4964435164078261e676b83f4308640d482b989f819597",
+  "machine_shape": "None"
+}

@@ -1,0 +1,6 @@
+tabular-playground-series-may-2022
+ventilator-pressure-prediction
+chaii-hindi-and-tamil-question-answering
+text-normalization-challenge-english-language
+statoil-iceberg-classifier-challenge
+tgs-salt-identification-challenge

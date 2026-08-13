@@ -1,0 +1,25 @@
+{
+  "id": "theoviel/deep-learning-starter-simple-lstm",
+  "id_no": 20739658,
+  "title": "Deep Learning Starter : Simple LSTM",
+  "code_file": "deep-learning-starter-simple-lstm.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [
+    "matplotlib",
+    "numpy",
+    "pandas"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "competition_sources": [
+    "ventilator-pressure-prediction"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-private-byod/python@sha256:e2679f9a71ed9c5961457be9a6331f58995c39efbfa524413e197431d4a95a65",
+  "machine_shape": "Gpu"
+}

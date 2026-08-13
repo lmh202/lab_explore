@@ -41,8 +41,20 @@
 # Scratch / temp PDF page extraction
 /tmp/
 
-# external repositories
-# Temporary `remote` branch allowlist: vendor only the standalone frontend.
+# MLE-bench is vendored on the `remote` branch so a clone can reproduce and
+# inspect the runs without relying on an unresolved nested-repository pointer.
+# Keep only the lightweight viewer artifacts from the local 2.5 GB run tree.
+/mle-bench/runs/*
+!/mle-bench/runs/pi-qwen-gemma/
+/mle-bench/runs/pi-qwen-gemma/**
+!/mle-bench/runs/pi-qwen-gemma/**/
+!/mle-bench/runs/pi-qwen-gemma/**/run.json
+!/mle-bench/runs/pi-qwen-gemma/**/host-logs/pi-events.jsonl
+!/mle-bench/runs/pi-qwen-gemma/**/workspace/task.md
+!/mle-bench/runs/pi-qwen-gemma/**/workspace/data/description.md
+!/mle-bench/runs/pi-qwen-gemma/**/workspace/submission/submission.csv
+
+# External Waypoint repository: vendor only the standalone frontend.
 # Waypoint's own nested .gitignore plus these explicit guards keep local build
 # products and credentials out of the parent repository.
 /waypoint/*

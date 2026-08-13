@@ -1,0 +1,24 @@
+{
+  "id": "ambrosm/tpsmay22-gradient-boosting-quickstart",
+  "id_no": 26706271,
+  "title": "TPSMAY22 Gradient-Boosting Quickstart",
+  "code_file": "tpsmay22-gradient-boosting-quickstart.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [
+    "tabular",
+    "gradient boosting"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "competition_sources": [
+    "tabular-playground-series-may-2022"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:207826ec471885b94cd5c0dfbdcd70322f25b991a52ffbe1e56598afcf4d62de",
+  "machine_shape": "None"
+}

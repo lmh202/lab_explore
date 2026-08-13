@@ -1,0 +1,23 @@
+{
+  "id": "cdeotte/tensorflow-transformer-0-112",
+  "id_no": 21749012,
+  "title": "TensorFlow Transformer - [0.112]",
+  "code_file": "deep-learning-starter-simple-lstm.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [],
+  "dataset_sources": [
+    ""
+  ],
+  "kernel_sources": [],
+  "competition_sources": [
+    "ventilator-pressure-prediction"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-private-byod/python@sha256:7b500f6081e92f812db283da919abe5e305c17a7130d456ddd8ddbd7da786e50",
+  "machine_shape": "Gpu"
+}

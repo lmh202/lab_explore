@@ -1,0 +1,23 @@
+{
+  "id": "ambrosm/tpsmay22-eda-which-makes-sense",
+  "id_no": 26703252,
+  "title": "TPSMAY22 EDA which makes sense \u2b50\ufe0f\u2b50\ufe0f\u2b50\ufe0f\u2b50\ufe0f\u2b50\ufe0f",
+  "code_file": "tpsmay22-eda-which-makes-sense.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [
+    "exploratory data analysis"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "competition_sources": [
+    "tabular-playground-series-may-2022"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:207826ec471885b94cd5c0dfbdcd70322f25b991a52ffbe1e56598afcf4d62de",
+  "machine_shape": "None"
+}

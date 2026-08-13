@@ -1,0 +1,37 @@
+{
+    "schema_version":  1,
+    "competition_id":  "text-normalization-challenge-english-language",
+    "variant":  "baseline",
+    "pi":  {
+               "version":  "0.84.1",
+               "provider":  "lum-llm",
+               "model":  "nvidia/Gemma-4-26B-A4B-NVFP4",
+               "arguments":  [
+                                 "--mode",
+                                 "json",
+                                 "--no-session",
+                                 "--provider",
+                                 "lum-llm",
+                                 "--model",
+                                 "nvidia/Gemma-4-26B-A4B-NVFP4",
+                                 "--no-extensions",
+                                 "--no-skills",
+                                 "--no-prompt-templates",
+                                 "--no-context-files",
+                                 "--no-approve",
+                                 "@task.md"
+                             ]
+           },
+    "seed":  42,
+    "time_limit_hours":  6,
+    "resource_limits":  {
+                            "max_cpu_threads":  4,
+                            "affinity_mask":  "0xF0",
+                            "core_offset":  4,
+                            "priority":  "BelowNormal",
+                            "child_windows_hidden":  true
+                        },
+    "started_at_utc":  "2026-08-13T05:59:21.0737898Z",
+    "status":  "running",
+    "workspace":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\text-normalization-challenge-english-language\\baseline\\20260813T055920038Z\\workspace"
+}

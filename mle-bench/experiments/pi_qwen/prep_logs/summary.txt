@@ -1,0 +1,28 @@
+=== lmsys-chatbot-arena ===
+STATUS=FAIL(1) lmsys-chatbot-arena: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/lmsys-chatbot-arena/rules, log in, and click 'I Accept', then re-run prepare for `lmsys-chatbot-arena`.
+=== tensorflow2-question-answering ===
+STATUS=FAIL(1) tensorflow2-question-answering: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/tensorflow2-question-answering/rules, log in, and click 'I Accept', then re-run prepare for `tensorflow2-question-answering`.
+=== h-and-m-personalized-fashion-recommendations ===
+STATUS=FAIL(1) h-and-m-personalized-fashion-recommendations: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/h-and-m-personalized-fashion-recommendations/rules, log in, and click 'I Accept', then re-run prepare for `h-and-m-personalized-fashion-recommendations`.
+=== champs-scalar-coupling ===
+STATUS=FAIL(1) champs-scalar-coupling: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/champs-scalar-coupling/rules, log in, and click 'I Accept', then re-run prepare for `champs-scalar-coupling`.
+=== uw-madison-gi-tract-image-segmentation ===
+STATUS=FAIL(1) uw-madison-gi-tract-image-segmentation: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/uw-madison-gi-tract-image-segmentation/rules, log in, and click 'I Accept', then re-run prepare for `uw-madison-gi-tract-image-segmentation`.
+=== hubmap-kidney-segmentation ===
+STATUS=FAIL(1) hubmap-kidney-segmentation: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/hubmap-kidney-segmentation/rules, log in, and click 'I Accept', then re-run prepare for `hubmap-kidney-segmentation`.
+=== siim-covid19-detection ===
+STATUS=FAIL(1) siim-covid19-detection: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/siim-covid19-detection/rules, log in, and click 'I Accept', then re-run prepare for `siim-covid19-detection`.
+=== tweet-sentiment-extraction ===
+STATUS=FAIL(1) tweet-sentiment-extraction: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/tweet-sentiment-extraction/rules, log in, and click 'I Accept', then re-run prepare for `tweet-sentiment-extraction`.
+=== google-quest-challenge ===
+STATUS=FAIL(1) google-quest-challenge: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/google-quest-challenge/rules, log in, and click 'I Accept', then re-run prepare for `google-quest-challenge`.
+=== jigsaw-unintended-bias-in-toxicity-classification ===
+STATUS=FAIL(1) jigsaw-unintended-bias-in-toxicity-classification: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/jigsaw-unintended-bias-in-toxicity-classification/rules, log in, and click 'I Accept', then re-run prepare for `jigsaw-unintended-bias-in-toxicity-classification`.
+=== AI4Code ===
+STATUS=FAIL(1) AI4Code: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/AI4Code/rules, log in, and click 'I Accept', then re-run prepare for `AI4Code`.
+=== learning-agency-lab-automated-essay-scoring-2 ===
+STATUS=FAIL(1) learning-agency-lab-automated-essay-scoring-2: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/learning-agency-lab-automated-essay-scoring-2/rules, log in, and click 'I Accept', then re-run prepare for `learning-agency-lab-automated-essay-scoring-2`.
+=== freesound-audio-tagging-2019 ===
+STATUS=FAIL(1) freesound-audio-tagging-2019: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/freesound-audio-tagging-2019/rules, log in, and click 'I Accept', then re-run prepare for `freesound-audio-tagging-2019`.
+=== stanford-covid-vaccine ===
+STATUS=FAIL(1) stanford-covid-vaccine: RuntimeError: You must accept the competition rules before downloading the dataset. Visit https://www.kaggle.com/c/stanford-covid-vaccine/rules, log in, and click 'I Accept', then re-run prepare for `stanford-covid-vaccine`.
