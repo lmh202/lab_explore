@@ -44,6 +44,9 @@
 # MLE-bench is vendored on the `remote` branch so a clone can reproduce and
 # inspect the runs without relying on an unresolved nested-repository pointer.
 # Keep only the lightweight viewer artifacts from the local 2.5 GB run tree.
+# The upstream LFS attributes are excluded because this branch stores its
+# selected CSV/JSONL viewer files as regular Git blobs.
+/mle-bench/.gitattributes
 /mle-bench/runs/*
 !/mle-bench/runs/pi-qwen-gemma/
 /mle-bench/runs/pi-qwen-gemma/**
