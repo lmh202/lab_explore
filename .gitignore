@@ -42,4 +42,12 @@
 /tmp/
 
 # external repositories
-/waypoint/
+# Temporary `remote` branch allowlist: vendor only the standalone frontend.
+# Waypoint's own nested .gitignore plus these explicit guards keep local build
+# products and credentials out of the parent repository.
+/waypoint/*
+!/waypoint/frontend/
+/waypoint/frontend/node_modules/
+/waypoint/frontend/.next/
+/waypoint/frontend/.env*
+!/waypoint/frontend/.env*.example
