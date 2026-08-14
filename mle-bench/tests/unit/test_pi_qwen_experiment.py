@@ -56,6 +56,8 @@ class PiQwenExperimentTest(unittest.TestCase):
         self.assertNotIn("experiment ledger", baseline.lower())
         self.assertNotIn("policy v1", baseline.lower())
         self.assertIn("data/sample_submission.csv", baseline)
+        self.assertIn("keep observations bounded", baseline.lower())
+        self.assertIn("pseudo tool-call", baseline.lower())
         self.assertIn("experiment ledger", policy.lower())
         self.assertIn("recurring validation clause", policy)
 
@@ -64,6 +66,17 @@ class PiQwenExperimentTest(unittest.TestCase):
         self.assertIn('"--provider", $provider', runner)
         self.assertIn('"--model", $model', runner)
         self.assertIn('"--no-session"', runner)
+
+    def test_gemma_runtime_guard_separates_export_from_agent_command(self):
+        guard = (EXPERIMENT_DIR / "extensions" / "gemma_runtime_guard.ts").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('TRANSFORMERS_VERBOSITY=error;\\n" +', guard)
+        self.assertNotIn('TRANSFORMERS_VERBOSITY=error\\\\n" +', guard)
+        self.assertIn("readsWholeFileIntoMemory(input.command)", guard)
+        self.assertIn("entire file into memory", guard)
+        self.assertIn("identicalCallStreak > MAX_IDENTICAL_CALLS", guard)
+        self.assertIn("three consecutive times", guard)
 
     def make_fake_prepared_dataset(self, sample_in_private: bool = True):
         competition_id = "fake-competition"
@@ -142,6 +155,27 @@ class PiQwenExperimentTest(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertIn("ID/order mismatch", result["errors"][0])
 
+    def test_natural_questions_public_format_validation(self):
+        sample = self.temp / "sample.csv"
+        valid = self.temp / "valid.csv"
+        invalid = self.temp / "invalid.csv"
+        sample.write_text(
+            "example_id,PredictionString\n123_short,\n123_long,\n", encoding="utf-8"
+        )
+        valid.write_text(
+            "example_id,PredictionString\n123_short,YES\n123_long,10:20\n",
+            encoding="utf-8",
+        )
+        invalid.write_text(
+            "example_id,PredictionString\n123_short,answer text\n123_long,10:20\n",
+            encoding="utf-8",
+        )
+
+        self.assertTrue(submission_validator.validate_submission(valid, sample)["valid"])
+        result = submission_validator.validate_submission(invalid, sample)
+        self.assertFalse(result["valid"])
+        self.assertIn("Natural Questions", result["errors"][0])
+
     def test_trace_audit_checks_tool_access_not_message_or_written_prose(self):
         workspace = self.temp / "workspace"
         workspace.mkdir()
@@ -211,6 +245,94 @@ class PiQwenExperimentTest(unittest.TestCase):
             "model_identity_mismatch",
             {violation["rule"] for violation in wrong_identity["violations"]},
         )
+
+    def test_trace_health_detects_latest_retryable_agent_failure(self):
+        trace = self.temp / "trace.jsonl"
+        events = [
+            {"type": "session"},
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "EngineCore encountered an issue",
+                },
+            },
+            {"type": "agent_settled"},
+            {"type": "session"},
+            {"type": "tool_execution_start", "toolName": "bash", "args": {}},
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "stop",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": 'call:bash{command:"python work.py"}<tool_call|>',
+                        }
+                    ],
+                },
+            },
+            {"type": "agent_settled"},
+        ]
+        trace.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+
+        health = experiment.trace_health(trace)
+
+        self.assertEqual(health["attempt"], 2)
+        self.assertEqual(health["tool_calls"], 1)
+        self.assertEqual(health["last_stop_reason"], "stop")
+        self.assertTrue(health["malformed_tool_call"])
+        self.assertTrue(health["retryable_failure"])
+        self.assertTrue(health["agent_settled"])
+
+    def test_trace_health_accepts_clean_latest_attempt(self):
+        trace = self.temp / "trace.jsonl"
+        events = [
+            {"type": "session"},
+            {
+                "type": "message_end",
+                "message": {"role": "assistant", "stopReason": "error"},
+            },
+            {"type": "session"},
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "stop",
+                    "content": [{"type": "text", "text": "Submission completed."}],
+                },
+            },
+            {"type": "agent_settled"},
+        ]
+        trace.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+
+        health = experiment.trace_health(trace)
+
+        self.assertFalse(health["provider_error"])
+        self.assertFalse(health["malformed_tool_call"])
+        self.assertFalse(health["retryable_failure"])
+
+    def test_log_redaction_is_streaming_and_handles_chunk_boundaries(self):
+        log = self.temp / "large.log"
+        secret = "test-secret-value"
+        prefix = b"x" * (1024 * 1024 - 5)
+        log.write_bytes(prefix + secret.encode() + b" suffix")
+        previous = os.environ.get("PI_QWEN_TEST_SECRET")
+        os.environ["PI_QWEN_TEST_SECRET"] = secret
+        try:
+            changed = experiment.redact_file_from_environment(
+                log, "PI_QWEN_TEST_SECRET"
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("PI_QWEN_TEST_SECRET", None)
+            else:
+                os.environ["PI_QWEN_TEST_SECRET"] = previous
+        self.assertTrue(changed)
+        self.assertNotIn(secret.encode(), log.read_bytes())
+        self.assertIn(b"<redacted>", log.read_bytes())
 
     def test_metric_direction_and_bronze_gap_closure(self):
         higher_baseline = {
@@ -346,6 +468,15 @@ class PiQwenExperimentTest(unittest.TestCase):
         self.assertIn("reviewable_timeouts", suite)
         self.assertIn('$caseRun.status -eq "timed_out"', suite)
         self.assertIn("$caseRun.grade.valid_submission", suite)
+
+        gemma_runner = (EXPERIMENT_DIR / "run_case_gemma_parallel.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"--extension", $RuntimeGuard', gemma_runner)
+        self.assertIn("MaxPiAttempts = 3", gemma_runner)
+        self.assertIn('"trace-health"', gemma_runner)
+        self.assertIn('Join-Path $venvScripts "python3.exe"', gemma_runner)
+        self.assertNotIn("[IO.File]::ReadAllText($logPath)", gemma_runner)
 
     def test_setup_splits_modern_download_from_official_prepare_environment(self):
         setup = (EXPERIMENT_DIR / "setup_experiment.ps1").read_text(encoding="utf-8")

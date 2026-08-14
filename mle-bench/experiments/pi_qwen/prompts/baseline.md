@@ -13,6 +13,18 @@ submission you can within the stated time limit.
 - You may check its public schema with:
   `python validate_submission.py submission/submission.csv`
 
+## Operational reliability
+
+- Use `python` as the canonical interpreter command; `python3` is also available for compatibility.
+- Keep observations bounded. Summarize large JSON/JSONL or notebook files with a short Python script;
+  do not use `head`, `tail`, `cat`, or recursive `grep` when a single record may be very large.
+- Disable live progress bars and write verbose training output to `logs/`; inspect only short tails or
+  periodic summaries. Do not print an entire dataset, notebook, model, or traceback into the chat.
+- If the same command or tool validation fails twice, diagnose it and change the command or arguments.
+  Use Pi's structured tools directly; never print pseudo tool-call markup as ordinary text.
+- Treat `submission/submission.csv` as a durable checkpoint. Validate it whenever a complete candidate
+  is available, and preserve a valid existing submission while attempting later improvements.
+
 ## Integrity constraints
 
 - Do not access parent directories or any path outside this workspace.

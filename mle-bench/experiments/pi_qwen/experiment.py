@@ -44,10 +44,10 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> dict[str, Any]:
     manifest = load_json(path)
     candidates = manifest.get("candidates", [])
     ids = [item["competition_id"] for item in candidates]
+    if not candidates:
+        raise ValueError("candidate competition list must not be empty")
     if len(ids) != len(set(ids)):
         raise ValueError("candidate competition IDs must be unique")
-    if len(candidates) != 6:
-        raise ValueError(f"expected exactly six candidate competitions, found {len(candidates)}")
     return manifest
 
 
@@ -223,17 +223,94 @@ def redact(text: str) -> str:
     return SENSITIVE_VALUE.sub(r"\1\2<redacted>", text)
 
 
-def iter_tool_calls(trace_path: Path) -> Iterable[tuple[int, str, Any]]:
+def redact_file_from_environment(path: Path, environment_name: str) -> bool:
+    """Replace an environment secret in a log with bounded memory usage."""
+
+    secret = os.environ.get(environment_name, "").encode()
+    if not secret or not path.is_file():
+        return False
+    replacement = b"<redacted>"
+    overlap = max(0, len(secret) - 1)
+    temporary = path.with_suffix(path.suffix + ".redacting")
+    changed = False
+    carry = b""
+    with path.open("rb") as source, temporary.open("wb") as target:
+        while True:
+            chunk = source.read(1024 * 1024)
+            if not chunk:
+                break
+            combined = carry + chunk
+            if secret in combined:
+                combined = combined.replace(secret, replacement)
+                changed = True
+            if overlap and len(combined) > overlap:
+                target.write(combined[:-overlap])
+                carry = combined[-overlap:]
+            else:
+                carry = combined
+        if secret in carry:
+            carry = carry.replace(secret, replacement)
+            changed = True
+        target.write(carry)
+    if changed:
+        os.replace(temporary, path)
+    else:
+        temporary.unlink()
+    return changed
+
+
+TRACE_EVENT_TYPE = re.compile(rb'"type"\s*:\s*"([^"]+)"')
+MAX_SELECTED_TRACE_EVENT_BYTES = 32 * 1024 * 1024
+
+
+def iter_selected_trace_events(
+    trace_path: Path, event_types: set[str]
+) -> Iterable[tuple[int, dict[str, Any]]]:
+    """Yield selected JSONL events without materializing unrelated giant lines."""
+
     if not trace_path.is_file():
         return
-    with trace_path.open("r", encoding="utf-8", errors="replace") as file:
-        for line_number, line in enumerate(file, start=1):
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
+    with trace_path.open("rb") as file:
+        line_number = 0
+        while True:
+            first = file.readline(4096)
+            if not first:
+                break
+            line_number += 1
+            match = TRACE_EVENT_TYPE.search(first)
+            selected = bool(match and match.group(1).decode(errors="replace") in event_types)
+            chunks = [first] if selected else []
+            total = len(first)
+            complete = first.endswith(b"\n")
+            oversized = False
+            while not complete:
+                part = file.readline(1024 * 1024)
+                if not part:
+                    complete = True
+                    break
+                complete = part.endswith(b"\n")
+                total += len(part)
+                if selected and not oversized:
+                    if total <= MAX_SELECTED_TRACE_EVENT_BYTES:
+                        chunks.append(part)
+                    else:
+                        chunks = []
+                        oversized = True
+            if not selected or oversized:
                 continue
-            if event.get("type") == "tool_execution_start":
-                yield line_number, str(event.get("toolName", "")), event.get("args", {})
+            try:
+                event = json.loads(b"".join(chunks))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(event, dict):
+                yield line_number, event
+
+
+def iter_tool_calls(trace_path: Path) -> Iterable[tuple[int, str, Any]]:
+    for line_number, event in iter_selected_trace_events(
+        trace_path, {"tool_execution_start"}
+    ):
+        yield line_number, str(event.get("toolName", "")), event.get("args", {})
 
 
 FORBIDDEN_RULES = {
@@ -287,22 +364,95 @@ def is_path_within(path: Path, root: Path) -> bool:
 
 def observed_model_identities(trace_path: Path) -> set[tuple[str, str]]:
     identities: set[tuple[str, str]] = set()
-    if not trace_path.is_file():
-        return identities
-    with trace_path.open("r", encoding="utf-8", errors="replace") as file:
-        for line in file:
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            message = event.get("message", {})
-            if not isinstance(message, dict) or message.get("role") != "assistant":
-                continue
-            provider = message.get("provider")
-            model = message.get("model")
-            if provider and model:
-                identities.add((str(provider), str(model)))
+    for _, event in iter_selected_trace_events(trace_path, {"message_end"}):
+        message = event.get("message", {})
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        provider = message.get("provider")
+        model = message.get("model")
+        if provider and model:
+            identities.add((str(provider), str(model)))
     return identities
+
+
+MALFORMED_TOOL_CALL = re.compile(
+    r"(?i)<\|?tool_call\|?>|<\|tool_response>|call:(?:bash|read|write|edit)\s*\{"
+)
+
+
+def message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            parts.append(str(block.get("text", "")))
+        elif block.get("type") == "thinking":
+            parts.append(str(block.get("thinking", "")))
+    return "\n".join(parts)
+
+
+def trace_health(trace_path: Path) -> dict[str, Any]:
+    """Classify the latest Pi invocation in an append-only JSONL trace.
+
+    A runner can append multiple Pi attempts to one trace. A ``session`` event
+    starts a new attempt, so only the last attempt determines whether another
+    retry is warranted. Filtering by the event type before JSON decoding keeps
+    this inexpensive even when verbose tool updates made the trace very large.
+    """
+
+    attempt = 0
+    assistant_turns = 0
+    tool_calls = 0
+    agent_settled = False
+    last_stop_reason: str | None = None
+    last_error = ""
+    last_text = ""
+    event_types = {"session", "tool_execution_start", "message_end", "agent_settled"}
+    for _, event in iter_selected_trace_events(trace_path, event_types):
+        event_type = event.get("type")
+        if event_type == "session":
+            attempt += 1
+            assistant_turns = 0
+            tool_calls = 0
+            agent_settled = False
+            last_stop_reason = None
+            last_error = ""
+            last_text = ""
+            continue
+        if event_type == "tool_execution_start":
+            tool_calls += 1
+            continue
+        if event_type == "agent_settled":
+            agent_settled = True
+            continue
+        message = event.get("message", {})
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        assistant_turns += 1
+        last_stop_reason = str(message.get("stopReason", "")) or None
+        last_error = str(message.get("errorMessage", ""))
+        last_text = message_text(message.get("content"))
+
+    malformed = bool(MALFORMED_TOOL_CALL.search(last_text)) and last_stop_reason == "stop"
+    provider_error = last_stop_reason == "error"
+    return {
+        "schema_version": 1,
+        "trace": str(trace_path),
+        "attempt": attempt,
+        "assistant_turns": assistant_turns,
+        "tool_calls": tool_calls,
+        "agent_settled": agent_settled,
+        "last_stop_reason": last_stop_reason,
+        "provider_error": provider_error,
+        "malformed_tool_call": malformed,
+        "retryable_failure": provider_error or malformed,
+        "error": redact(last_error)[:1000],
+    }
 
 
 def audit_trace(
@@ -313,7 +463,19 @@ def audit_trace(
 ) -> dict[str, Any]:
     violations: list[dict[str, Any]] = []
     tool_call_count = 0
-    for line_number, tool_name, args in iter_tool_calls(trace_path):
+    identities: set[tuple[str, str]] = set()
+    selected_types = {"tool_execution_start", "message_end"}
+    for line_number, event in iter_selected_trace_events(trace_path, selected_types):
+        if event.get("type") == "message_end":
+            message = event.get("message", {})
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                provider = message.get("provider")
+                model = message.get("model")
+                if provider and model:
+                    identities.add((str(provider), str(model)))
+            continue
+        tool_name = str(event.get("toolName", ""))
+        args = event.get("args", {})
         tool_call_count += 1
         if tool_name in {"read", "write", "edit"} and isinstance(args, dict):
             auditable_args: Any = {"path": args.get("path", "")}
@@ -362,7 +524,6 @@ def audit_trace(
                             "match": redact(raw_path)[:200],
                         }
                     )
-    identities = observed_model_identities(trace_path)
     identity_verified = None
     if expected_provider is not None and expected_model is not None:
         expected = (expected_provider, expected_model)
@@ -1039,6 +1200,19 @@ def command_audit(args: argparse.Namespace) -> int:
     return 0 if result["clean"] else 2
 
 
+def command_trace_health(args: argparse.Namespace) -> int:
+    result = trace_health(args.trace)
+    write_json(args.output, result)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+def command_redact_file(args: argparse.Namespace) -> int:
+    changed = redact_file_from_environment(args.path, args.environment_name)
+    print(json.dumps({"path": str(args.path), "redacted": changed}))
+    return 0
+
+
 def command_grade(args: argparse.Namespace) -> int:
     result = grade_submission(
         args.repo_root, args.data_dir, args.competition_id, args.submission
@@ -1110,6 +1284,16 @@ def build_parser() -> argparse.ArgumentParser:
     audit_parser.add_argument("--expected-provider")
     audit_parser.add_argument("--expected-model")
     audit_parser.set_defaults(function=command_audit)
+
+    health_parser = subparsers.add_parser("trace-health")
+    health_parser.add_argument("--trace", type=Path, required=True)
+    health_parser.add_argument("--output", type=Path, required=True)
+    health_parser.set_defaults(function=command_trace_health)
+
+    redact_parser = subparsers.add_parser("redact-file")
+    redact_parser.add_argument("--path", type=Path, required=True)
+    redact_parser.add_argument("--environment-name", required=True)
+    redact_parser.set_defaults(function=command_redact_file)
 
     grade_parser = subparsers.add_parser("grade")
     grade_parser.add_argument("--repo-root", type=Path, required=True)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from itertools import zip_longest
 from pathlib import Path
 
@@ -60,7 +61,19 @@ def validate_submission(submission: Path, sample: Path) -> dict:
                     f"expected {sample_row[0]!r}, got {submission_row[0]!r}"
                 )
                 break
-            if any(value.strip() == "" for value in submission_row[1:]):
+            natural_questions_row = (
+                submission_header == ["example_id", "PredictionString"]
+                and sample_row[0].endswith(("_long", "_short"))
+            )
+            prediction = submission_row[1].strip() if len(submission_row) > 1 else ""
+            if natural_questions_row:
+                if prediction and not re.fullmatch(r"(?:\d+:\d+|YES|NO)", prediction):
+                    result["errors"].append(
+                        f"invalid Natural Questions prediction at CSV row {row_number}: "
+                        "expected start_token:end_token, YES, NO, or blank"
+                    )
+                    break
+            elif any(value.strip() == "" for value in submission_row[1:]):
                 result["errors"].append(f"blank prediction at CSV row {row_number}")
                 break
             result["rows"] += 1

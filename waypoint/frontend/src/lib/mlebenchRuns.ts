@@ -29,6 +29,31 @@ function resolveRunsDir(): string {
   return path.resolve(/* turbopackIgnore: true */ process.cwd(), "..", "..", "mle-bench", "runs");
 }
 
+function resolveNotesPath(): string {
+  if (process.env.MLEBENCH_NOTES_PATH) {
+    return path.resolve(process.env.MLEBENCH_NOTES_PATH);
+  }
+  // waypoint/frontend -> repo root is two levels up, same as resolveRunsDir().
+  return path.resolve(/* turbopackIgnore: true */ process.cwd(), "..", "..", "notes.md");
+}
+
+// notes.md is the hand-curated record of which competitions have a written-up
+// case (`## <competitionId> — ...` headers). Discovered runs are filtered
+// down to this set so the viewer tracks the write-up instead of every
+// directory that happens to be on disk (smoke tests, abandoned/timed-out
+// attempts nobody wrote up yet, etc). If notes.md can't be read or yields no
+// headers, discovery fails open and shows everything -- better a noisy list
+// than a blank page from a missing/misconfigured path.
+async function readRecordedCaseIds(): Promise<Set<string> | null> {
+  const raw = await readTextIfExists(resolveNotesPath());
+  if (raw == null) return null;
+  const ids = new Set<string>();
+  for (const match of raw.matchAll(/^##\s+(\S+)/gm)) {
+    ids.add(match[1]);
+  }
+  return ids.size > 0 ? ids : null;
+}
+
 async function listSubdirs(dirPath: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
@@ -76,15 +101,19 @@ function compareCandidateRuns(
 }
 
 // Public discovery is deliberately curated: only the requested Gemma model
-// is visible, and exactly one attempt is retained per competition: the latest
+// is visible, only competitions with a written-up notes.md case are visible,
+// and exactly one attempt is retained per competition: the latest
 // run-directory timestamp, regardless of completion or submission status.
 //
 // This function is also the route allowlist. Detail/transcript endpoints call
-// it through resolveRunDir(), so a hand-written URL cannot reveal a Qwen or
-// superseded Gemma run.
+// it through resolveRunDir(), so a hand-written URL cannot reveal a Qwen run,
+// a superseded Gemma attempt, or a competition nobody wrote up yet (e.g. an
+// abandoned/timed-out one, or the spaceship-titanic smoke test).
 export async function discoverRuns(): Promise<RunRef[]> {
+  const recordedCaseIds = await readRecordedCaseIds();
   const candidates: { ref: RunRef; run: RunSelectionMetadata }[] = [];
   for (const ref of await discoverAllRuns()) {
+    if (recordedCaseIds && !recordedCaseIds.has(ref.competitionId)) continue;
     const run = await readJsonIfExists<RunSelectionMetadata>(path.join(ref.dir, "run.json"));
     if (run?.pi?.model === VISIBLE_MODEL) {
       candidates.push({ ref, run });

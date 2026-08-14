@@ -1,0 +1,46 @@
+{
+    "schema_version":  1,
+    "competition_id":  "lmsys-chatbot-arena",
+    "variant":  "baseline",
+    "pi":  {
+               "version":  "0.84.1",
+               "provider":  "lum-llm",
+               "model":  "nvidia/Gemma-4-26B-A4B-NVFP4",
+               "arguments":  [
+                                 "--mode",
+                                 "json",
+                                 "--no-session",
+                                 "--provider",
+                                 "lum-llm",
+                                 "--model",
+                                 "nvidia/Gemma-4-26B-A4B-NVFP4",
+                                 "--no-extensions",
+                                 "--extension",
+                                 "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\experiments\\pi_qwen\\extensions\\gemma_runtime_guard.ts",
+                                 "--no-skills",
+                                 "--no-prompt-templates",
+                                 "--no-context-files",
+                                 "--no-approve",
+                                 "@task.md"
+                             ]
+           },
+    "seed":  42,
+    "time_limit_hours":  6,
+    "resource_limits":  {
+                            "max_cpu_threads":  4,
+                            "affinity_mask":  "0xF",
+                            "core_offset":  0,
+                            "priority":  "BelowNormal",
+                            "child_windows_hidden":  true
+                        },
+    "reliability":  {
+                        "runtime_guard":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\experiments\\pi_qwen\\extensions\\gemma_runtime_guard.ts",
+                        "max_pi_attempts":  3,
+                        "min_retry_seconds":  180,
+                        "bounded_tool_result_chars":  6000,
+                        "proactive_compaction_tokens":  70000
+                    },
+    "started_at_utc":  "2026-08-14T02:49:13.6369889Z",
+    "status":  "running",
+    "workspace":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\lmsys-chatbot-arena\\baseline\\20260814T024912432Z\\workspace"
+}

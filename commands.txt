@@ -1,1 +1,14 @@
 cd waypoint/backend && uv run waypoint serve
+
+ssh.exe `
+  -o "ProxyCommand=ssh.exe -i C:\Users\14646\.ssh\id_rsa_webmaster -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -p 10020 -W %h:%p webmaster@kv.run" `
+  -o PubkeyAuthentication=no `
+  -o PreferredAuthentications=keyboard-interactive,password `
+  -o StrictHostKeyChecking=accept-new `
+  -o ExitOnForwardFailure=yes `
+  -o ServerAliveInterval=30 `
+  -o ServerAliveCountMax=3 `
+  -N `
+  -L "3001:127.0.0.1:3000" `
+  -L "8787:127.0.0.1:8787" `
+  "minhao@192.168.6.201"

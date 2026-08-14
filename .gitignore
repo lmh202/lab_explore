@@ -41,11 +41,29 @@
 # Scratch / temp PDF page extraction
 /tmp/
 
+# Throwaway scratch scripts/output some agent runs drop next to the
+# experiment code while digging through a trace (e.g. small one-off
+# `_tmp_extract*.py` parsers) -- never intentional deliverables.
+/mle-bench/experiments/pi_qwen/_tmp_*
+
 # MLE-bench is vendored on the `remote` branch so a clone can reproduce and
 # inspect the runs without relying on an unresolved nested-repository pointer.
 # Keep only the lightweight viewer artifacts from the local 2.5 GB run tree.
 # The upstream LFS attributes are excluded because this branch stores its
 # selected CSV/JSONL viewer files as regular Git blobs.
+#
+# Gitignore only stops this file from being TRACKED -- if a fresh vendor/pull
+# of upstream MLE-bench ever re-creates it on disk, git still reads and
+# applies it (LFS `clean`/`diff` filters on *.csv and runs/**/*.json(l)) for
+# every git command, even though it's ignored. Symptoms seen from this once
+# already: every already-committed run.json/leaderboard.csv shows as
+# perpetually "modified" with no real content change, and `git add` on a
+# leaderboard.csv silently stages an LFS pointer stub (`version
+# https://git-lfs.github.com/spec/v1 ...`) instead of the real CSV, because
+# this repo has no LFS remote to resolve it against on a fresh clone. If this
+# happens again: delete the physical file (`rm mle-bench/.gitattributes`)
+# before running any `git add`/`status`/`diff` in `mle-bench/`, don't just
+# rely on it being gitignored.
 /mle-bench/.gitattributes
 /mle-bench/runs/*
 !/mle-bench/runs/pi-qwen-gemma/

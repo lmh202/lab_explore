@@ -1,0 +1,14 @@
+﻿{
+    "updated_at_utc":  "2026-08-14T09:07:10.3298077Z",
+    "interval_minutes":  5,
+    "stall_minutes":  20,
+    "active_cases":  [
+                         "uw-madison-gi-tract-image-segmentation"
+                     ],
+    "restart_counts":  {
+
+                       },
+    "restart_pending":  [
+
+                        ]
+}

@@ -2,12 +2,9 @@ lmsys-chatbot-arena
 tensorflow2-question-answering
 champs-scalar-coupling
 uw-madison-gi-tract-image-segmentation
-hubmap-kidney-segmentation
-siim-covid19-detection
 tweet-sentiment-extraction
 google-quest-challenge
 jigsaw-unintended-bias-in-toxicity-classification
 AI4Code
 learning-agency-lab-automated-essay-scoring-2
-freesound-audio-tagging-2019
 stanford-covid-vaccine

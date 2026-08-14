@@ -1,0 +1,150 @@
+{
+    "schema_version":  1,
+    "competition_id":  "tensorflow2-question-answering",
+    "variant":  "baseline",
+    "pi":  {
+               "version":  "0.84.1",
+               "provider":  "lum-llm",
+               "model":  "nvidia/Gemma-4-26B-A4B-NVFP4",
+               "arguments":  [
+                                 "--mode",
+                                 "json",
+                                 "--no-session",
+                                 "--provider",
+                                 "lum-llm",
+                                 "--model",
+                                 "nvidia/Gemma-4-26B-A4B-NVFP4",
+                                 "--no-extensions",
+                                 "--extension",
+                                 "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\experiments\\pi_qwen\\extensions\\gemma_runtime_guard.ts",
+                                 "--no-skills",
+                                 "--no-prompt-templates",
+                                 "--no-context-files",
+                                 "--no-approve",
+                                 "@task.md"
+                             ]
+           },
+    "seed":  42,
+    "time_limit_hours":  6,
+    "resource_limits":  {
+                            "max_cpu_threads":  4,
+                            "affinity_mask":  "0xF0",
+                            "core_offset":  4,
+                            "priority":  "BelowNormal",
+                            "child_windows_hidden":  true
+                        },
+    "reliability":  {
+                        "runtime_guard":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\experiments\\pi_qwen\\extensions\\gemma_runtime_guard.ts",
+                        "max_pi_attempts":  3,
+                        "min_retry_seconds":  180,
+                        "attempts":  [
+                                         {
+                                             "attempt":  1,
+                                             "started_at_utc":  "2026-08-14T03:11:27.0834380Z",
+                                             "ended_at_utc":  "2026-08-14T03:27:51.8694281Z",
+                                             "exit_code":  0,
+                                             "timed_out":  false,
+                                             "submission_valid":  true,
+                                             "trace_health":  {
+                                                                  "schema_version":  1,
+                                                                  "trace":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\host-logs\\pi-events.jsonl",
+                                                                  "attempt":  1,
+                                                                  "assistant_turns":  34,
+                                                                  "tool_calls":  33,
+                                                                  "agent_settled":  true,
+                                                                  "last_stop_reason":  "stop",
+                                                                  "provider_error":  false,
+                                                                  "malformed_tool_call":  false,
+                                                                  "retryable_failure":  false,
+                                                                  "error":  ""
+                                                              }
+                                         }
+                                     ],
+                        "final_trace_health":  {
+                                                   "schema_version":  1,
+                                                   "trace":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\host-logs\\pi-events.jsonl",
+                                                   "attempt":  1,
+                                                   "assistant_turns":  34,
+                                                   "tool_calls":  33,
+                                                   "agent_settled":  true,
+                                                   "last_stop_reason":  "stop",
+                                                   "provider_error":  false,
+                                                   "malformed_tool_call":  false,
+                                                   "retryable_failure":  false,
+                                                   "error":  ""
+                                               }
+                    },
+    "started_at_utc":  "2026-08-14T03:11:27.0324075Z",
+    "ended_at_utc":  "2026-08-14T03:27:51.8727019Z",
+    "duration_seconds":  984.84,
+    "exit_code":  0,
+    "timed_out":  false,
+    "status":  "invalid_submission",
+    "public_submission_validation":  {
+                                         "valid":  true,
+                                         "submission":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\workspace\\submission\\submission.csv",
+                                         "sample":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\workspace\\data\\sample_submission.csv",
+                                         "rows":  61476,
+                                         "errors":  [
+
+                                                    ]
+                                     },
+    "integrity":  {
+                      "schema_version":  1,
+                      "trace":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\host-logs\\pi-events.jsonl",
+                      "tool_call_count":  33,
+                      "model_identity":  {
+                                             "expected_provider":  "lum-llm",
+                                             "expected_model":  "nvidia/Gemma-4-26B-A4B-NVFP4",
+                                             "observed":  [
+                                                              {
+                                                                  "provider":  "lum-llm",
+                                                                  "model":  "nvidia/Gemma-4-26B-A4B-NVFP4"
+                                                              }
+                                                          ],
+                                             "verified":  true
+                                         },
+                      "clean":  true,
+                      "violations":  [
+
+                                     ]
+                  },
+    "grade":  {
+                  "ok":  true,
+                  "competition_id":  "tensorflow2-question-answering",
+                  "score":  null,
+                  "gold_threshold":  0.68578,
+                  "silver_threshold":  0.62872,
+                  "bronze_threshold":  0.61913,
+                  "median_threshold":  0.59639,
+                  "any_medal":  false,
+                  "gold_medal":  false,
+                  "silver_medal":  false,
+                  "bronze_medal":  false,
+                  "above_median":  false,
+                  "submission_exists":  true,
+                  "valid_submission":  false,
+                  "is_lower_better":  false,
+                  "created_at":  "2026-08-14T11:28:10.786517",
+                  "submission_path":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\workspace\\submission\\submission.csv"
+              },
+    "finalization_exit_codes":  {
+                                    "public_validation":  0,
+                                    "integrity_audit":  0,
+                                    "official_grader":  0
+                                },
+    "artifacts":  {
+                      "workspace":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\workspace",
+                      "task":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\workspace\\task.md",
+                      "trace_jsonl":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\host-logs\\pi-events.jsonl",
+                      "stderr":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\host-logs\\pi-stderr.log",
+                      "attempt_log":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\host-logs\\pi-attempts.json",
+                      "trace_health":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\host-logs\\trace-health.json",
+                      "runtime_guard":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\experiments\\pi_qwen\\extensions\\gemma_runtime_guard.ts",
+                      "code":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\workspace\\code",
+                      "submission":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\workspace\\submission\\submission.csv",
+                      "public_validation":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\host-logs\\submission-validation.json",
+                      "grade":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\host-logs\\grade.json",
+                      "integrity":  "D:\\Downloads\\Content\\NUS\\lab\\mle-bench\\runs\\pi-qwen-gemma\\tensorflow2-question-answering\\baseline\\20260814T030712883Z\\host-logs\\integrity.json"
+                  }
+}

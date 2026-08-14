@@ -65,18 +65,6 @@
       "note": "Approximate. Medical image segmentation, second data point alongside tgs-salt/statoil-iceberg to check whether the never-tried-a-CNN pattern recurs."
     },
     {
-      "competition_id": "hubmap-kidney-segmentation",
-      "modality": "vision",
-      "dataset_size_gb": 7,
-      "note": "Approximate, high-res whole-slide images -- deliberately larger than tgs-salt's 101x101 crops to stress resource management on big images. Watch disk usage: this modality family duplicates raw->prepared, see h-and-m lesson in protocol.md."
-    },
-    {
-      "competition_id": "siim-covid19-detection",
-      "modality": "vision",
-      "dataset_size_gb": 10,
-      "note": "Approximate. DICOM medical images, detection + classification two-stage pipeline."
-    },
-    {
       "competition_id": "tweet-sentiment-extraction",
       "modality": "text",
       "dataset_size_gb": 0.01,
@@ -107,12 +95,6 @@
       "note": "2024 LLM-era essay scoring -- checks whether the agent substitutes an LLM-as-judge shortcut for real training."
     },
     {
-      "competition_id": "freesound-audio-tagging-2019",
-      "modality": "audio",
-      "dataset_size_gb": 25,
-      "note": "Approximate, not yet verified on this host -- zero audio coverage in the original 6. Watch disk usage before running unattended."
-    },
-    {
       "competition_id": "stanford-covid-vaccine",
       "modality": "bio-sequence",
       "dataset_size_gb": 0.05,
@@ -123,6 +105,18 @@
     {
       "competition_id": "h-and-m-personalized-fashion-recommendations",
       "reason": "raw dataset alone is ~32GB and mlebench's prepare step additionally copies images from raw/ into prepared/public/ (near-2x footprint) -- exhausted 90GB of free disk mid-run on 2026-08-13 and starved every competition queued after it. Not attempted again; replace only if a smaller image-heavy recommender alternative is found."
+    },
+    {
+      "competition_id": "hubmap-kidney-segmentation",
+      "reason": "high-res whole-slide images turned out far larger than estimated -- consumed roughly 85GB+ (raw + partial prepared/ copy) before exhausting 62GB of free disk on 2026-08-13, worse than h-and-m. A disk-space pre-flight guard prevented cascading into the rest of the batch this time, but the competition itself is not usable on this disk budget. Not attempted again."
+    },
+    {
+      "competition_id": "siim-covid19-detection",
+      "reason": "DICOM medical images -- exhausted 62GB of free disk during the raw zip download itself (partial zip only, never reached extraction/prepare). Third image-heavy competition in a row to blow the disk budget; not attempted again."
+    },
+    {
+      "competition_id": "freesound-audio-tagging-2019",
+      "reason": "Dropped preemptively, not attempted. 10.5h curated + 80h noisy audio at 16-bit/44.1kHz PCM is ~27GB uncompressed by direct calculation, and every image-heavy competition tried so far has needed close to 2x that in raw+prepared combined -- given 3/3 media-heavy competitions already blew the available disk budget, this was judged not worth a 4th failed attempt without first provisioning materially more disk."
     }
   ],
   "failure_categories": {

@@ -17,10 +17,24 @@ experiment, not an official isolated MLE-bench leaderboard claim.
 - Candidates: the exact six IDs in `candidate_ids.txt` (about 2.114 GB raw in total)
 
 The runner starts Pi and its descendants without visible console windows, caps the process tree to
-four logical processors, and disables Pi extensions, skills, prompt templates, context files,
+four logical processors, and disables extension discovery, skills, prompt templates, context files,
 sessions, and project trust. This removes accidental prompt additions, but Windows-host execution is not a security
 sandbox. The prompt forbids access outside the copied workspace and the trace is audited after the
 run. Keep this limitation attached to every result.
+
+Gemma expansion reruns use one explicitly named, repository-owned runtime guard while extension
+discovery remains disabled. The guard truncates oversized tool observations before they enter model
+context, suppresses live progress bars, triggers compaction at 70k tokens, rejects a fourth identical
+failed call, and queues bounded recovery turns for malformed textual tool calls or transient provider
+errors. `run_case_gemma_parallel.ps1` additionally ensures `python3.exe` resolves to the experiment
+environment and can restart Pi in the same isolated workspace up to three times within the original
+wall-clock budget. Every attempt and final trace-health classification is recorded in `run.json`.
+
+After the current expansion batch has stopped, rerun only the four infrastructure failures serially:
+
+```powershell
+.\experiments\pi_qwen\rerun_gemma_invalid_4.ps1 -TimeLimitHours 6 -Seed 42
+```
 
 ## 1. Prepare the host
 

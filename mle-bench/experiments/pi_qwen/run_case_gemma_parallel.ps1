@@ -14,6 +14,10 @@ param(
     [ValidateRange(1, 63)]
     [int]$MaxCpuThreads = 4,
     [int]$CoreOffset = 0,
+    [ValidateRange(1, 5)]
+    [int]$MaxPiAttempts = 3,
+    [ValidateRange(30, 1800)]
+    [int]$MinRetrySeconds = 180,
     [string]$RepoRoot,
     [string]$DataDir,
     [string]$RunsDir,
@@ -56,6 +60,7 @@ if (-not $PiExe) {
 
 $ManifestPath = Join-Path $PSScriptRoot "candidates_gemma.json"
 $ExperimentPy = Join-Path $PSScriptRoot "experiment.py"
+$RuntimeGuard = Join-Path $PSScriptRoot "extensions\gemma_runtime_guard.ts"
 
 # Inline resource limiting with a core offset (see header comment).
 $effectiveThreads = [Math]::Min($MaxCpuThreads, [Environment]::ProcessorCount)
@@ -106,6 +111,9 @@ if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath $PiExe -PathType Leaf)) {
     throw "Pi executable is missing: $PiExe"
+}
+if (-not (Test-Path -LiteralPath $RuntimeGuard -PathType Leaf)) {
+    throw "Gemma runtime guard is missing: $RuntimeGuard"
 }
 if (-not (Test-Path Env:\ANTHROPIC_AUTH_TOKEN) -or
     [string]::IsNullOrWhiteSpace($env:ANTHROPIC_AUTH_TOKEN)) {
@@ -177,6 +185,9 @@ if ($prepareProcess.ExitCode -ne 0) {
 $tracePath = Join-Path $hostLogs "pi-events.jsonl"
 $stderrPath = Join-Path $hostLogs "pi-stderr.log"
 $killLogPath = Join-Path $hostLogs "timeout-kill.log"
+$retryLogPath = Join-Path $hostLogs "pi-attempts.json"
+$traceHealthPath = Join-Path $hostLogs "trace-health.json"
+$traceHealthStdoutPath = Join-Path $hostLogs "trace-health.stdout.log"
 $validationPath = Join-Path $hostLogs "submission-validation.json"
 $validationStderrPath = Join-Path $hostLogs "submission-validation.stderr.log"
 $auditPath = Join-Path $hostLogs "integrity.json"
@@ -195,6 +206,7 @@ $piArgs = @(
     "--provider", $provider,
     "--model", $model,
     "--no-extensions",
+    "--extension", $RuntimeGuard,
     "--no-skills",
     "--no-prompt-templates",
     "--no-context-files",
@@ -215,6 +227,13 @@ $initialRun = [ordered]@{
     seed = $Seed
     time_limit_hours = $TimeLimitHours
     resource_limits = $resourceLimits
+    reliability = [ordered]@{
+        runtime_guard = $RuntimeGuard
+        max_pi_attempts = $MaxPiAttempts
+        min_retry_seconds = $MinRetrySeconds
+        bounded_tool_result_chars = 6000
+        proactive_compaction_tokens = 70000
+    }
     started_at_utc = $started.ToString("o")
     status = "running"
     workspace = $workspace
@@ -227,47 +246,127 @@ $initialRun = [ordered]@{
 
 $env:PYTHONHASHSEED = [string]$Seed
 $venvScripts = Split-Path $PythonExe -Parent
-$env:Path = "$venvScripts;$env:Path"
-
-$piCommandValues = @($PiExe) + $piArgs
-foreach ($value in $piCommandValues) {
-    if ([string]$value -match '[\r\n"%]') {
-        throw "Pi executable and arguments may not contain quotes, percent signs, or newlines."
+$python3Exe = Join-Path $venvScripts "python3.exe"
+if (-not (Test-Path -LiteralPath $python3Exe -PathType Leaf)) {
+    try {
+        New-Item -ItemType HardLink -Path $python3Exe -Target $PythonExe -ErrorAction Stop | Out-Null
+    }
+    catch {
+        Copy-Item -LiteralPath $PythonExe -Destination $python3Exe -Force
     }
 }
-$piCommand = (@($piCommandValues | ForEach-Object { '"' + [string]$_ + '"' }) -join " ")
-$piCommand += ' 1>"' + $tracePath + '" 2>"' + $stderrPath + '"'
-$piShellCommand = '"' + $piCommand + '"'
-$process = Start-Process `
-    -FilePath $env:ComSpec `
-    -ArgumentList @("/D", "/S", "/C", $piShellCommand) `
-    -WorkingDirectory $workspace `
-    -WindowStyle Hidden `
-    -PassThru
-
+$env:Path = "$venvScripts;$env:Path"
 $timeoutSeconds = [Math]::Max(1, [int][Math]::Ceiling($TimeLimitHours * 3600.0))
-try {
-    $exited = $process.WaitForExit($timeoutSeconds * 1000)
-} catch {
-    $exited = $false
+$deadline = $started.AddSeconds($timeoutSeconds)
+$timedOut = $false
+$exitCode = $null
+$attempts = @()
+$traceHealth = [pscustomobject]@{
+    agent_settled = $false
+    last_stop_reason = $null
+    provider_error = $false
+    malformed_tool_call = $false
+    retryable_failure = $false
+    error = ""
 }
-$timedOut = -not $exited
-if ($timedOut) {
-    Start-Process -FilePath "$env:SystemRoot\System32\taskkill.exe" -ArgumentList @("/PID", [string]$process.Id, "/T", "/F") `
-        -RedirectStandardOutput $killLogPath -RedirectStandardError "$killLogPath.stderr.log" -NoNewWindow -Wait | Out-Null
-    $process.WaitForExit(30000) | Out-Null
+[IO.File]::WriteAllText($tracePath, "", [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($stderrPath, "", [Text.UTF8Encoding]::new($false))
+$retryPromptPath = Join-Path $workspace "retry.md"
+[IO.File]::WriteAllText(
+    $retryPromptPath,
+    "A prior Pi attempt did not finish cleanly. Continue from the files already present in this workspace. Do not inspect host logs or paths outside the workspace. Diagnose existing code before changing it, keep outputs bounded, preserve any valid submission, and finish only after submission/submission.csv passes the public validator.`n",
+    [Text.UTF8Encoding]::new($false)
+)
+
+for ($attempt = 1; $attempt -le $MaxPiAttempts; $attempt++) {
+    $remainingSeconds = [Math]::Max(0, [int][Math]::Floor(($deadline - [DateTime]::UtcNow).TotalSeconds))
+    if ($remainingSeconds -le 0) {
+        $timedOut = $true
+        break
+    }
+    $attemptArgs = @($piArgs)
+    if ($attempt -gt 1) {
+        $attemptArgs += "@retry.md"
+    }
+    $piCommandValues = @($PiExe) + $attemptArgs
+    foreach ($value in $piCommandValues) {
+        if ([string]$value -match '[\r\n"%]') {
+            throw "Pi executable and arguments may not contain quotes, percent signs, or newlines."
+        }
+    }
+    $piCommand = (@($piCommandValues | ForEach-Object { '"' + [string]$_ + '"' }) -join " ")
+    $piCommand += ' 1>>"' + $tracePath + '" 2>>"' + $stderrPath + '"'
+    $piShellCommand = '"' + $piCommand + '"'
+    $attemptStarted = [DateTime]::UtcNow
+    $process = Start-Process `
+        -FilePath $env:ComSpec `
+        -ArgumentList @("/D", "/S", "/C", $piShellCommand) `
+        -WorkingDirectory $workspace `
+        -WindowStyle Hidden `
+        -PassThru
+    try {
+        $exited = $process.WaitForExit($remainingSeconds * 1000)
+    }
+    catch {
+        $exited = $false
+    }
+    $attemptTimedOut = -not $exited
+    if ($attemptTimedOut) {
+        Start-Process -FilePath "$env:SystemRoot\System32\taskkill.exe" -ArgumentList @("/PID", [string]$process.Id, "/T", "/F") `
+            -RedirectStandardOutput $killLogPath -RedirectStandardError "$killLogPath.stderr.log" -NoNewWindow -Wait | Out-Null
+        $process.WaitForExit(30000) | Out-Null
+    }
+    $process.Refresh()
+    $exitCode = if ($process.HasExited) { $process.ExitCode } else { $null }
+
+    $healthProcess = Start-Process -FilePath $PythonExe -ArgumentList @(
+        $ExperimentPy, "trace-health", "--trace", $tracePath, "--output", $traceHealthPath
+    ) -RedirectStandardOutput $traceHealthStdoutPath -NoNewWindow -Wait -PassThru
+    if ($healthProcess.ExitCode -eq 0 -and (Test-Path -LiteralPath $traceHealthPath -PathType Leaf)) {
+        $traceHealth = Get-Content -LiteralPath $traceHealthPath -Raw | ConvertFrom-Json
+    }
+
+    $attemptValidationPath = Join-Path $hostLogs ("attempt-{0}-submission-validation.json" -f $attempt)
+    $submissionValid = $false
+    if (Test-Path -LiteralPath $submissionPath -PathType Leaf) {
+        $attemptValidation = Start-Process -FilePath $PythonExe -ArgumentList @(
+            (Join-Path $workspace "validate_submission.py"), $submissionPath, "--sample", $samplePath
+        ) -RedirectStandardOutput $attemptValidationPath -NoNewWindow -Wait -PassThru
+        $submissionValid = $attemptValidation.ExitCode -eq 0
+    }
+    $attempts += [pscustomobject]@{
+        attempt = $attempt
+        started_at_utc = $attemptStarted.ToString("o")
+        ended_at_utc = [DateTime]::UtcNow.ToString("o")
+        exit_code = $exitCode
+        timed_out = $attemptTimedOut
+        submission_valid = $submissionValid
+        trace_health = $traceHealth
+    }
+    [IO.File]::WriteAllText(
+        $retryLogPath,
+        ($attempts | ConvertTo-Json -Depth 8),
+        [Text.UTF8Encoding]::new($false)
+    )
+    if ($attemptTimedOut) {
+        $timedOut = $true
+        break
+    }
+    $needsRetry = ($exitCode -ne 0) -or [bool]$traceHealth.retryable_failure -or -not $submissionValid
+    $secondsAfterAttempt = [Math]::Max(0, [int][Math]::Floor(($deadline - [DateTime]::UtcNow).TotalSeconds))
+    if (-not $needsRetry -or $attempt -ge $MaxPiAttempts -or $secondsAfterAttempt -lt $MinRetrySeconds) {
+        break
+    }
+    Start-Sleep -Seconds ([Math]::Min(30, 5 * $attempt))
 }
-$process.Refresh()
-$exitCode = if ($process.HasExited) { $process.ExitCode } else { $null }
 $ended = [DateTime]::UtcNow
 
 foreach ($logPath in @($tracePath, $stderrPath, $killLogPath)) {
     if (Test-Path -LiteralPath $logPath -PathType Leaf) {
-        $logText = [IO.File]::ReadAllText($logPath)
-        if (-not [string]::IsNullOrEmpty($env:ANTHROPIC_AUTH_TOKEN)) {
-            $logText = $logText.Replace($env:ANTHROPIC_AUTH_TOKEN, "<redacted>")
-        }
-        [IO.File]::WriteAllText($logPath, $logText, [Text.UTF8Encoding]::new($false))
+        Start-Process -FilePath $PythonExe -ArgumentList @(
+            $ExperimentPy, "redact-file", "--path", $logPath,
+            "--environment-name", "ANTHROPIC_AUTH_TOKEN"
+        ) -NoNewWindow -Wait | Out-Null
     }
 }
 
@@ -321,6 +420,8 @@ if (-not $integrity.clean) {
     $status = "timed_out"
 } elseif ($exitCode -ne 0) {
     $status = "pi_failed"
+} elseif ([bool]$traceHealth.provider_error -or [bool]$traceHealth.malformed_tool_call) {
+    $status = "pi_failed"
 } elseif (-not $validation.valid -or -not $grade.valid_submission) {
     $status = "invalid_submission"
 }
@@ -338,6 +439,13 @@ $run = [ordered]@{
     seed = $Seed
     time_limit_hours = $TimeLimitHours
     resource_limits = $resourceLimits
+    reliability = [ordered]@{
+        runtime_guard = $RuntimeGuard
+        max_pi_attempts = $MaxPiAttempts
+        min_retry_seconds = $MinRetrySeconds
+        attempts = $attempts
+        final_trace_health = $traceHealth
+    }
     started_at_utc = $started.ToString("o")
     ended_at_utc = $ended.ToString("o")
     duration_seconds = [Math]::Round(($ended - $started).TotalSeconds, 3)
@@ -357,6 +465,9 @@ $run = [ordered]@{
         task = (Join-Path $workspace "task.md")
         trace_jsonl = $tracePath
         stderr = $stderrPath
+        attempt_log = $retryLogPath
+        trace_health = $traceHealthPath
+        runtime_guard = $RuntimeGuard
         code = (Join-Path $workspace "code")
         submission = $submissionPath
         public_validation = $validationPath
